@@ -190,6 +190,117 @@ def compact_agent_context(context: dict[str, Any], days: int) -> dict[str, Any]:
     }
 
 
+def _canonical(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _list_delta(previous: list[Any], current: list[Any]) -> dict[str, list[Any]]:
+    previous_keys = {_canonical(item) for item in previous}
+    current_keys = {_canonical(item) for item in current}
+    return {
+        "added": [item for item in current if _canonical(item) not in previous_keys],
+        "removed": [item for item in previous if _canonical(item) not in current_keys],
+    }
+
+
+def build_agent_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for name in sorted(set(previous["metrics"]) | set(current["metrics"])):
+        old_metric = previous["metrics"].get(name, {})
+        new_metric = current["metrics"].get(name, {})
+        rows = _list_delta(old_metric.get("daily", []), new_metric.get("daily", []))
+        if rows["added"] or rows["removed"]:
+            metrics[name] = {
+                "unit": new_metric.get("unit", old_metric.get("unit")),
+                "aggregation": new_metric.get("aggregation", old_metric.get("aggregation")),
+                **rows,
+            }
+
+    categories: dict[str, Any] = {}
+    for name in sorted(set(previous["categories"]) | set(current["categories"])):
+        rows = _list_delta(
+            previous["categories"].get(name, {}).get("daily", []),
+            current["categories"].get(name, {}).get("daily", []),
+        )
+        if rows["added"] or rows["removed"]:
+            categories[name] = rows
+
+    activity = _list_delta(previous["activityRings"], current["activityRings"])
+    workouts = _list_delta(previous["workouts"], current["workouts"])
+    special: dict[str, Any] = {}
+    for name in sorted(set(previous["special"]) | set(current["special"])):
+        rows = _list_delta(previous["special"].get(name, []), current["special"].get(name, []))
+        if rows["added"] or rows["removed"]:
+            special[name] = rows
+
+    profile = None
+    if previous["profile"] != current["profile"]:
+        profile = {"before": previous["profile"], "after": current["profile"]}
+
+    has_changes = bool(
+        metrics or categories or special or profile
+        or activity["added"] or activity["removed"]
+        or workouts["added"] or workouts["removed"]
+    )
+    return {
+        "kind": "health-agent-delta",
+        "status": "changed",
+        "hasDataChanges": has_changes,
+        "previousGeneratedAt": previous["sourceGeneratedAt"],
+        "sourceGeneratedAt": current["sourceGeneratedAt"],
+        "window": current["window"],
+        "rowFormats": current["rowFormats"],
+        "profileChange": profile,
+        "metrics": metrics,
+        "categories": categories,
+        "activityRings": activity,
+        "workouts": workouts,
+        "special": special,
+    }
+
+
+def write_json_atomic(destination: Path, payload: dict[str, Any]) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(destination)
+
+
+def agent_delta(context_path: Path, state_path: Path, days: int) -> dict[str, Any]:
+    current = compact_agent_context(load_agent_context(context_path), days)
+    if not state_path.exists():
+        result = {
+            "kind": "health-agent-delta",
+            "status": "initial",
+            "hasDataChanges": True,
+            "sourceGeneratedAt": current["sourceGeneratedAt"],
+            "context": current,
+        }
+        write_json_atomic(state_path, current)
+        return result
+
+    try:
+        previous = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ExportValidationError(f"{state_path}: invalid agent state: {error}") from error
+    if not isinstance(previous, dict) or previous.get("kind") != "health-agent-context-window":
+        raise ExportValidationError(f"{state_path}: unsupported agent state")
+    if previous.get("sourceGeneratedAt") == current["sourceGeneratedAt"]:
+        return {
+            "kind": "health-agent-delta",
+            "status": "unchanged",
+            "hasDataChanges": False,
+            "sourceGeneratedAt": current["sourceGeneratedAt"],
+        }
+
+    result = build_agent_delta(previous, current)
+    write_json_atomic(state_path, current)
+    return result
+
+
 def materialize(exports: Iterable[ExportFile]) -> dict[str, list[dict[str, Any]]]:
     changes: dict[str, dict[str, dict[str, Any]]] = {}
     snapshots: dict[str, list[dict[str, Any]]] = {}
@@ -247,6 +358,11 @@ def build_parser() -> argparse.ArgumentParser:
     context_command.add_argument("file", type=Path)
     context_command.add_argument("--days", type=int, default=30)
     context_command.add_argument("--pretty", action="store_true")
+    delta_command = subparsers.add_parser("agent-delta")
+    delta_command.add_argument("file", type=Path)
+    delta_command.add_argument("--state", type=Path, required=True)
+    delta_command.add_argument("--days", type=int, default=365)
+    delta_command.add_argument("--pretty", action="store_true")
     return parser
 
 
@@ -268,6 +384,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 print(json.dumps(context, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+            return 0
+        if args.command == "agent-delta":
+            delta = agent_delta(args.file.expanduser(), args.state.expanduser(), args.days)
+            if args.pretty:
+                print(json.dumps(delta, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(json.dumps(delta, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
             return 0
         root = args.exports.expanduser()
         if args.command == "validate":

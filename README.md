@@ -66,6 +66,15 @@ python3 mac/healthjson.py context \
 
 The real 7-day file in this project was reduced from about 432 KB to about 9 KB. See [the agent workflow](docs/AGENT_INSTRUCTIONS.md) for first ingestion, subsequent updates, and a ready system prompt.
 
+For a persistent hourly agent, use the stateful delta command instead. The first call returns the baseline once; later calls return only changed rows, or a tiny `unchanged` response:
+
+```sh
+python3 mac/healthjson.py agent-delta \
+  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Agent/health-context.json" \
+  --state "$HOME/.healthjson-agent/state.json" \
+  --days 365
+```
+
 ## Raw archive format
 
 Every file is a self-contained change set:

@@ -152,6 +152,53 @@ class HealthJSONTests(unittest.TestCase):
         compact = healthjson.compact_agent_context(context, 7)
         self.assertEqual(compact["metrics"]["heartRate"]["daily"], [["2026-07-10", 62]])
 
+    def test_agent_delta_initial_unchanged_and_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "health-context.json"
+            state = root / "state.json"
+
+            def write_context(generated_at, rows):
+                self.write_export(root, source.name, {
+                    "schemaVersion": 1,
+                    "kind": "health-agent-context",
+                    "generatedAt": generated_at,
+                    "period": {"end": "2026-07-11"},
+                    "rowFormats": {"cumulativeMetric": ["date", "sum"]},
+                    "profile": {},
+                    "metrics": {"stepCount": {
+                        "unit": "count",
+                        "aggregation": "dailySum",
+                        "daily": rows,
+                    }},
+                    "categories": {},
+                    "activityRings": [],
+                    "workouts": [],
+                    "special": {},
+                })
+
+            write_context("2026-07-11T10:00:00Z", [["2026-07-10", 8000]])
+            initial = healthjson.agent_delta(source, state, 365)
+            self.assertEqual(initial["status"], "initial")
+            self.assertTrue(state.exists())
+
+            unchanged = healthjson.agent_delta(source, state, 365)
+            self.assertEqual(unchanged["status"], "unchanged")
+            self.assertFalse(unchanged["hasDataChanges"])
+
+            write_context("2026-07-11T11:00:00Z", [["2026-07-10", 8100], ["2026-07-11", 1200]])
+            changed = healthjson.agent_delta(source, state, 365)
+            self.assertEqual(changed["status"], "changed")
+            self.assertTrue(changed["hasDataChanges"])
+            self.assertEqual(
+                changed["metrics"]["stepCount"]["added"],
+                [["2026-07-10", 8100], ["2026-07-11", 1200]],
+            )
+            self.assertEqual(
+                changed["metrics"]["stepCount"]["removed"],
+                [["2026-07-10", 8000]],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
