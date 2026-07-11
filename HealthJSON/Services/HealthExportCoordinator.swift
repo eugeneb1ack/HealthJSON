@@ -13,6 +13,7 @@ final class HealthExportCoordinator: ObservableObject {
     @Published private(set) var hasRequestedAuthorization: Bool
     @Published private(set) var backgroundDeliveryEnabled = false
     @Published private(set) var automaticSyncEnabled: Bool
+    @Published private(set) var automaticChangesPending: Bool
 
     let healthStore: HKHealthStore
     let supportedTypeCount = HealthDataCatalog.sampleTypes.count
@@ -21,12 +22,15 @@ final class HealthExportCoordinator: ObservableObject {
     private var observerQueries: [String: HKObserverQuery] = [:]
     private var foregroundExportRunning = false
     private var agentExportRunning = false
+    private var automaticChangeGeneration = 0
     private var readableTypeIdentifiers: Set<String>
 
     private let readableTypesKey = "health-json.readable-types"
     private let lastSyncKey = "health-json.last-sync"
     private let lastBackgroundSyncKey = "health-json.last-background-sync"
     private let automaticSyncKey = "health-json.automatic-sync-enabled"
+    private let automaticChangesPendingKey = "health-json.automatic-changes-pending"
+    private let minimumAutomaticInterval: TimeInterval = 60 * 60
 
     private init() {
         let store = HKHealthStore()
@@ -36,6 +40,7 @@ final class HealthExportCoordinator: ObservableObject {
         automaticSyncEnabled = UserDefaults.standard.object(forKey: automaticSyncKey) == nil
             ? true
             : UserDefaults.standard.bool(forKey: automaticSyncKey)
+        automaticChangesPending = UserDefaults.standard.bool(forKey: automaticChangesPendingKey)
         readableTypeIdentifiers = Set(UserDefaults.standard.stringArray(forKey: readableTypesKey) ?? [])
         lastSyncDate = UserDefaults.standard.object(forKey: lastSyncKey) as? Date
         lastBackgroundSyncDate = UserDefaults.standard.object(forKey: lastBackgroundSyncKey) as? Date
@@ -64,8 +69,9 @@ final class HealthExportCoordinator: ObservableObject {
 
                 Task { @MainActor in
                     completion()
+                    self.markAutomaticChangesPending()
                     guard self.automaticSyncEnabled else { return }
-                    _ = await self.runAgentExport(isBackground: true)
+                    _ = await self.performAutomaticRefreshIfDue()
                 }
             }
             observerQueries[type.identifier] = query
@@ -113,7 +119,11 @@ final class HealthExportCoordinator: ObservableObject {
             await requestAuthorization()
             guard hasRequestedAuthorization else { return }
         }
-        _ = await runAgentExport(isBackground: false)
+        let generation = automaticChangeGeneration
+        let success = await runAgentExport(isBackground: false)
+        if success {
+            clearAutomaticChangesPending(ifGenerationIs: generation)
+        }
     }
 
     func setAutomaticSyncEnabled(_ enabled: Bool) async {
@@ -121,7 +131,8 @@ final class HealthExportCoordinator: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: automaticSyncKey)
         if enabled {
             await enableBackgroundDelivery()
-            _ = await runAgentExport(isBackground: true)
+            markAutomaticChangesPending()
+            _ = await performAutomaticRefreshIfDue(force: true)
         } else {
             do {
                 try await healthStore.disableAllBackgroundDelivery()
@@ -197,7 +208,35 @@ final class HealthExportCoordinator: ObservableObject {
 
     func performScheduledRefresh() async -> Bool {
         guard automaticSyncEnabled else { return false }
-        return await runAgentExport(isBackground: true)
+        return await performAutomaticRefreshIfDue()
+    }
+
+    private func performAutomaticRefreshIfDue(force: Bool = false) async -> Bool {
+        guard automaticChangesPending else { return true }
+        if !force,
+           let lastSyncDate,
+           Date().timeIntervalSince(lastSyncDate) < minimumAutomaticInterval {
+            return true
+        }
+
+        let generation = automaticChangeGeneration
+        let success = await runAgentExport(isBackground: true)
+        if success {
+            clearAutomaticChangesPending(ifGenerationIs: generation)
+        }
+        return success
+    }
+
+    private func markAutomaticChangesPending() {
+        automaticChangeGeneration += 1
+        automaticChangesPending = true
+        UserDefaults.standard.set(true, forKey: automaticChangesPendingKey)
+    }
+
+    private func clearAutomaticChangesPending(ifGenerationIs generation: Int) {
+        guard generation == automaticChangeGeneration else { return }
+        automaticChangesPending = false
+        UserDefaults.standard.set(false, forKey: automaticChangesPendingKey)
     }
 
     private func runAgentExport(isBackground: Bool) async -> Bool {
@@ -234,7 +273,7 @@ final class HealthExportCoordinator: ObservableObject {
         var enabled = 0
         for type in HealthDataCatalog.backgroundDeliveryTypes {
             do {
-                try await healthStore.enableBackgroundDelivery(for: type, frequency: .immediate)
+                try await healthStore.enableBackgroundDelivery(for: type, frequency: .hourly)
                 enabled += 1
             } catch {
                 continue

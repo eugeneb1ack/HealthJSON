@@ -110,6 +110,16 @@ struct ContentView: View {
                 )
                 .tint(.green)
 
+                Text(
+                    coordinator.automaticSyncEnabled
+                        ? (coordinator.automaticChangesPending
+                            ? "Изменения накоплены и войдут в ближайшее часовое обновление."
+                            : "Автоматически — не чаще одного раза в час.")
+                        : "Автоматическое обновление приостановлено."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
                 Button {
                     Task { await coordinator.syncChanges() }
                 } label: {
@@ -209,7 +219,7 @@ struct ContentView: View {
             Text("Данные о здоровье чувствительны. Файлы остаются в вашем iCloud, но приложение не шифрует их отдельно. Защитите Apple ID и учётную запись Mac.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Автосинхронизацию можно приостановить. Ручная кнопка обновления работает всегда. При включённой автоматике HealthKit реагирует на изменения, а точное время фонового запуска определяет iOS.")
+            Text("Автосинхронизацию можно приостановить. Изменения объединяются и экспортируются не чаще раза в час; ручная кнопка работает сразу. Точное время фонового запуска определяет iOS.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
