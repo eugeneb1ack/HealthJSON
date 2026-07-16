@@ -123,6 +123,12 @@ actor HealthExportEngine {
         return try await agentExporter.export()
     }
 
+    func makeAgentSnapshotShareCopy() async throws -> URL {
+        await acquireExclusiveAccess()
+        defer { releaseExclusiveAccess() }
+        return try await cloudStore.makeAgentSnapshotShareCopy()
+    }
+
     private func preferredUnits() async -> [HKQuantityType: HKUnit] {
         if let cachedPreferredUnits { return cachedPreferredUnits }
         let units = (try? await healthStore.preferredUnits(for: Set(HealthDataCatalog.quantityTypes))) ?? [:]

@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: HealthExportCoordinator
     @State private var showsFolderPicker = false
+    @State private var sharedFile: SharedFile?
 
     var body: some View {
         NavigationStack {
@@ -23,6 +25,9 @@ struct ContentView: View {
                     showsFolderPicker = false
                     Task { await coordinator.selectExportFolder(url) }
                 }
+            }
+            .sheet(item: $sharedFile) { item in
+                ActivityView(items: [item.url])
             }
         }
     }
@@ -132,15 +137,18 @@ struct ContentView: View {
 
             }
 
-            if let agentFileURL = coordinator.agentFileURL,
-               FileManager.default.fileExists(atPath: agentFileURL.path) {
-                ShareLink(item: agentFileURL) {
-                    Label("Поделиться единым файлом", systemImage: "doc.badge.arrow.up")
-                        .frame(maxWidth: .infinity)
+            Button {
+                Task {
+                    if let url = await coordinator.prepareAgentFileForSharing() {
+                        sharedFile = SharedFile(url: url)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .disabled(isBusy)
+            } label: {
+                Label("Поделиться единым файлом", systemImage: "doc.badge.arrow.up")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered)
+            .disabled(isBusy)
 
             Button {
                 showsFolderPicker = true
@@ -263,6 +271,21 @@ struct ContentView: View {
             .replacingOccurrences(of: "HKCategoryTypeIdentifier", with: "")
             .replacingOccurrences(of: "Identifier", with: "")
     }
+}
+
+private struct SharedFile: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 private extension View {

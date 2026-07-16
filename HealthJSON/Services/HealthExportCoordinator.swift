@@ -146,9 +146,19 @@ final class HealthExportCoordinator: ObservableObject {
     func selectExportFolder(_ url: URL) async {
         do {
             exportLocation = try await engine.selectExportFolder(url)
+            updateAgentFileURL()
             phase = .idle
         } catch {
             phase = .failed("Не удалось сохранить доступ к папке: \(error.localizedDescription)")
+        }
+    }
+
+    func prepareAgentFileForSharing() async -> URL? {
+        do {
+            return try await engine.makeAgentSnapshotShareCopy()
+        } catch {
+            phase = .failed("Не удалось подготовить единый файл: сначала обновите JSON.")
+            return nil
         }
     }
 
@@ -237,6 +247,12 @@ final class HealthExportCoordinator: ObservableObject {
         guard generation == automaticChangeGeneration else { return }
         automaticChangesPending = false
         UserDefaults.standard.set(false, forKey: automaticChangesPendingKey)
+    }
+
+    private func updateAgentFileURL() {
+        agentFileURL = exportLocation?.url
+            .deletingLastPathComponent()
+            .appendingPathComponent("Agent/health-context.json")
     }
 
     private func runAgentExport(isBackground: Bool) async -> Bool {

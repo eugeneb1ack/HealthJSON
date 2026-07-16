@@ -1,5 +1,16 @@
 import Foundation
 
+enum CloudExportStoreError: LocalizedError {
+    case wouldReplacePopulatedSnapshotWithEmpty
+
+    var errorDescription: String? {
+        switch self {
+        case .wouldReplacePopulatedSnapshotWithEmpty:
+            "HealthKit временно не вернул данные; предыдущий снимок сохранён."
+        }
+    }
+}
+
 final class CloudExportStore {
     private let fileManager: FileManager
     private let folderAccess: ExportFolderAccess
@@ -97,6 +108,12 @@ final class CloudExportStore {
             .appendingPathComponent("Agent", isDirectory: true)
         try fileManager.createDirectory(at: agentFolder, withIntermediateDirectories: true)
         let destination = agentFolder.appendingPathComponent("health-context.json")
+        if !Self.hasHealthContent(object),
+           let existingData = try? Data(contentsOf: destination),
+           let existingObject = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+           Self.hasHealthContent(existingObject) {
+            throw CloudExportStoreError.wouldReplacePopulatedSnapshotWithEmpty
+        }
         try data.write(
             to: destination,
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
@@ -110,6 +127,41 @@ final class CloudExportStore {
             try? fileManager.removeItem(at: documents.appendingPathComponent("AgentDebug", isDirectory: true))
         }
         return (location, destination)
+    }
+
+    func makeAgentSnapshotShareCopy() async throws -> URL {
+        let location = try await resolveLocation()
+        let selectedFolder = folderAccess.resolve()
+        return try await Task.detached(priority: .userInitiated) { [fileManager] in
+            let startedAccess = selectedFolder?.startAccessingSecurityScopedResource() ?? false
+            defer {
+                if startedAccess { selectedFolder?.stopAccessingSecurityScopedResource() }
+            }
+
+            let source = location.url
+                .deletingLastPathComponent()
+                .appendingPathComponent("Agent/health-context.json")
+            guard fileManager.fileExists(atPath: source.path) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+
+            let shareFolder = fileManager.temporaryDirectory
+                .appendingPathComponent("HealthJSONShare", isDirectory: true)
+            try fileManager.createDirectory(at: shareFolder, withIntermediateDirectories: true)
+            let destination = shareFolder.appendingPathComponent("health-context.json")
+            try? fileManager.removeItem(at: destination)
+            try fileManager.copyItem(at: source, to: destination)
+            return destination
+        }.value
+    }
+
+    private static func hasHealthContent(_ object: [String: Any]) -> Bool {
+        let dictionaries = ["metrics", "categories", "special"]
+        if dictionaries.contains(where: { !(object[$0] as? [String: Any] ?? [:]).isEmpty }) {
+            return true
+        }
+        let arrays = ["activityRings", "workouts"]
+        return arrays.contains { !(object[$0] as? [Any] ?? []).isEmpty }
     }
 
     private static let fileDateFormatter: DateFormatter = {

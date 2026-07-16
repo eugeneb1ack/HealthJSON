@@ -18,30 +18,28 @@ actor AgentHealthExporter {
         let today = calendar.startOfDay(for: generatedAt)
         let end = calendar.date(byAdding: .day, value: 1, to: today) ?? generatedAt
         let start = calendar.date(byAdding: .day, value: -historyDays, to: today) ?? today
-        let units = (try? await healthStore.preferredUnits(for: Set(HealthDataCatalog.quantityTypes))) ?? [:]
+        let units = try await healthStore.preferredUnits(for: Set(HealthDataCatalog.quantityTypes))
 
-        let metrics = await withTaskGroup(of: (String, [String: Any]?).self) { group in
+        let metrics = try await withThrowingTaskGroup(of: (String, [String: Any]?).self) { group in
             for type in HealthDataCatalog.quantityTypes {
                 guard let unit = units[type] else { continue }
                 group.addTask {
-                    let value = try? await self.quantityMetric(type, unit: unit, start: start, end: end)
-                    return (await self.semanticKey(type.identifier), value ?? nil)
+                    let value = try await self.quantityMetric(type, unit: unit, start: start, end: end)
+                    return (await self.semanticKey(type.identifier), value)
                 }
             }
             var result: [String: Any] = [:]
-            for await (key, value) in group {
+            for try await (key, value) in group {
                 if let value { result[key] = value }
             }
             return result
         }
         print("HealthJSON agent metrics ready: \(metrics.count)")
 
-        let categories = await withTaskGroup(of: (String, [String: Any]?).self) { group in
+        let categories = try await withThrowingTaskGroup(of: (String, [String: Any]?).self) { group in
             for type in HealthDataCatalog.categoryTypes {
                 group.addTask {
-                    guard let samples = try? await self.samples(of: type, start: start, end: end) else {
-                        return (await self.semanticKey(type.identifier), nil)
-                    }
+                    let samples = try await self.samples(of: type, start: start, end: end)
                     let values = samples.compactMap { $0 as? HKCategorySample }
                     return (
                         await self.semanticKey(type.identifier),
@@ -50,18 +48,18 @@ actor AgentHealthExporter {
                 }
             }
             var result: [String: Any] = [:]
-            for await (key, value) in group {
+            for try await (key, value) in group {
                 if let value { result[key] = value }
             }
             return result
         }
         print("HealthJSON agent categories ready: \(categories.count)")
 
-        let workouts = (try? await workoutPayload(start: start, end: end, units: units)) ?? []
+        let workouts = try await workoutPayload(start: start, end: end, units: units)
         print("HealthJSON agent workouts ready: \(workouts.count)")
-        let activity = (try? await activityPayload(start: start, end: generatedAt)) ?? []
+        let activity = try await activityPayload(start: start, end: generatedAt)
         print("HealthJSON agent activity ready: \(activity.count)")
-        let special = await specialPayload(start: start, end: end)
+        let special = try await specialPayload(start: start, end: end)
         print("HealthJSON agent special ready: \(special.count)")
         let payload: [String: Any] = [
             "schemaVersion": 1,
@@ -258,7 +256,7 @@ actor AgentHealthExporter {
         }.sorted { ($0["date"] as? String ?? "") < ($1["date"] as? String ?? "") }
     }
 
-    private func specialPayload(start: Date, end: Date) async -> [String: Any] {
+    private func specialPayload(start: Date, end: Date) async throws -> [String: Any] {
         var result: [String: Any] = [:]
         let assessmentTypes = [
             "HKScoredAssessmentTypeIdentifierGAD7",
@@ -271,7 +269,8 @@ actor AgentHealthExporter {
         ] + assessmentTypes
 
         for type in types {
-            guard let values = try? await samples(of: type, start: start, end: end), !values.isEmpty else { continue }
+            let values = try await samples(of: type, start: start, end: end)
+            guard !values.isEmpty else { continue }
             result[semanticKey(type.identifier)] = values.suffix(100).map { sample in
                 var item: [String: Any] = [
                     "start": Self.iso8601.string(from: sample.startDate),
