@@ -43,7 +43,7 @@ actor AgentHealthExporter {
                     let values = samples.compactMap { $0 as? HKCategorySample }
                     return (
                         await self.semanticKey(type.identifier),
-                        await self.categoryMetric(type, samples: values)
+                        await self.categoryMetric(type, samples: values, start: start, end: end)
                     )
                 }
             }
@@ -166,7 +166,9 @@ actor AgentHealthExporter {
 
     private func categoryMetric(
         _ type: HKCategoryType,
-        samples: [HKCategorySample]
+        samples: [HKCategorySample],
+        start: Date,
+        end: Date
     ) -> [String: Any]? {
         guard !samples.isEmpty else { return nil }
         struct Bucket {
@@ -175,29 +177,34 @@ actor AgentHealthExporter {
         }
         var days: [String: [Int: Bucket]] = [:]
         for sample in samples {
-            let duration = max(0, sample.endDate.timeIntervalSince(sample.startDate))
-            if duration == 0 {
-                let day = Self.dayFormatter.string(from: sample.startDate)
+            guard let interval = CategoryIntervalClipper.clip(
+                sampleStart: sample.startDate,
+                sampleEnd: sample.endDate,
+                to: start..<end
+            ) else { continue }
+            if interval.isEmpty {
+                let day = Self.dayFormatter.string(from: interval.lowerBound)
                 var bucket = days[day, default: [:]][sample.value, default: Bucket()]
                 bucket.count += 1
                 days[day, default: [:]][sample.value] = bucket
                 continue
             }
 
-            var cursor = sample.startDate
-            while cursor < sample.endDate {
+            var cursor = interval.lowerBound
+            while cursor < interval.upperBound {
                 let dayStart = calendar.startOfDay(for: cursor)
-                let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? sample.endDate
-                let segmentEnd = min(nextDay, sample.endDate)
+                let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? interval.upperBound
+                let segmentEnd = min(nextDay, interval.upperBound)
                 let day = Self.dayFormatter.string(from: dayStart)
                 var bucket = days[day, default: [:]][sample.value, default: Bucket()]
-                bucket.count += cursor == sample.startDate ? 1 : 0
+                bucket.count += cursor == interval.lowerBound ? 1 : 0
                 bucket.seconds += segmentEnd.timeIntervalSince(cursor)
                 days[day, default: [:]][sample.value] = bucket
                 cursor = segmentEnd
             }
         }
 
+        guard !days.isEmpty else { return nil }
         let daily: [[Any]] = days.keys.sorted().map { day in
             let values: [[Any]] = (days[day] ?? [:]).keys.sorted().map { value in
                 let bucket = days[day]?[value] ?? Bucket()
