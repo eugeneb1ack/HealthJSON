@@ -1,0 +1,46 @@
+name: Build iOS app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "HealthJSON/**"
+      - "HealthJSON.xcodeproj/**"
+      - ".github/workflows/build-ios.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: xcodebuild -version
+      - name: Build unsigned device app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project HealthJSON.xcodeproj \
+            -target HealthJSON \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build" \
+            build | tee xcodebuild.log
+          test -d build/HealthJSON.app
+      - name: Package app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent build/HealthJSON.app HealthJSON-unsigned.zip
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: HealthJSON-unsigned
+          path: |
+            HealthJSON-unsigned.zip
+            xcodebuild.log
+          if-no-files-found: error
+          retention-days: 14
