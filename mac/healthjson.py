@@ -10,9 +10,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 SUPPORTED_SCHEMA_VERSIONS = {1, 2}
+MAX_SLEEP_INTERVALS = 10_000
+MAX_SLEEP_INTERVAL_DURATION = timedelta(hours=36)
+SLEEP_INTERVAL_VALUES = frozenset({
+    "inBed", "asleepUnspecified", "awake", "asleepCore", "asleepDeep", "asleepREM",
+})
 
 
 class ExportValidationError(ValueError):
@@ -140,7 +146,34 @@ def load_agent_context(path: Path) -> dict[str, Any]:
     ):
         if not isinstance(raw.get(key), expected_type):
             raise ExportValidationError(f"{path}: {key} has an invalid type")
+    if "sleepIntervals" in raw:
+        intervals = raw["sleepIntervals"]
+        if not isinstance(intervals, list) or len(intervals) > MAX_SLEEP_INTERVALS:
+            raise ExportValidationError(f"{path}: sleepIntervals has an invalid type or count")
+        if raw["rowFormats"].get("sleepInterval") != ["start", "end", "value"]:
+            raise ExportValidationError(f"{path}: rowFormats.sleepInterval is invalid")
+        for row in intervals:
+            if not isinstance(row, list) or len(row) != 3:
+                raise ExportValidationError(f"{path}: sleepIntervals rows must contain exactly 3 values")
+            start = _aware_timestamp(row[0], f"{path}: sleep interval start")
+            end = _aware_timestamp(row[1], f"{path}: sleep interval end")
+            if end <= start or end - start > MAX_SLEEP_INTERVAL_DURATION:
+                raise ExportValidationError(f"{path}: sleep interval has an invalid duration")
+            if row[2] not in SLEEP_INTERVAL_VALUES:
+                raise ExportValidationError(f"{path}: sleep interval has an unknown value")
     return raw
+
+
+def _aware_timestamp(value: Any, label: str) -> datetime:
+    if not isinstance(value, str) or len(value) > 64:
+        raise ExportValidationError(f"{label} must be a timezone-aware ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ExportValidationError(f"{label} must be a timezone-aware ISO-8601 timestamp") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ExportValidationError(f"{label} must be a timezone-aware ISO-8601 timestamp")
+    return parsed
 
 
 def compact_agent_context(context: dict[str, Any], days: int) -> dict[str, Any]:
@@ -151,6 +184,20 @@ def compact_agent_context(context: dict[str, Any], days: int) -> dict[str, Any]:
     except (KeyError, TypeError, ValueError) as error:
         raise ExportValidationError("agent context has an invalid period.end") from error
     cutoff = (end - timedelta(days=days - 1)).isoformat()
+
+    sleep_intervals: list[Any] = []
+    if context.get("sleepIntervals"):
+        try:
+            period_zone = ZoneInfo(context["period"]["timeZone"])
+        except (KeyError, TypeError, ZoneInfoNotFoundError) as error:
+            raise ExportValidationError("agent context has an invalid period.timeZone") from error
+        window_start = datetime.combine(datetime.fromisoformat(cutoff).date(), datetime.min.time(), period_zone)
+        window_end = datetime.combine(end + timedelta(days=1), datetime.min.time(), period_zone)
+        sleep_intervals = [
+            row for row in context["sleepIntervals"]
+            if _aware_timestamp(row[1], "sleep interval end") > window_start
+            and _aware_timestamp(row[0], "sleep interval start") < window_end
+        ]
 
     metrics: dict[str, Any] = {}
     for name, metric in context["metrics"].items():
@@ -187,6 +234,7 @@ def compact_agent_context(context: dict[str, Any], days: int) -> dict[str, Any]:
         "activityRings": activity,
         "workouts": workouts,
         "special": special,
+        "sleepIntervals": sleep_intervals,
     }
 
 
@@ -227,6 +275,7 @@ def build_agent_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict
 
     activity = _list_delta(previous["activityRings"], current["activityRings"])
     workouts = _list_delta(previous["workouts"], current["workouts"])
+    sleep_intervals = _list_delta(previous.get("sleepIntervals", []), current.get("sleepIntervals", []))
     special: dict[str, Any] = {}
     for name in sorted(set(previous["special"]) | set(current["special"])):
         rows = _list_delta(previous["special"].get(name, []), current["special"].get(name, []))
@@ -241,6 +290,7 @@ def build_agent_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict
         metrics or categories or special or profile
         or activity["added"] or activity["removed"]
         or workouts["added"] or workouts["removed"]
+        or sleep_intervals["added"] or sleep_intervals["removed"]
     )
     return {
         "kind": "health-agent-delta",
@@ -256,6 +306,7 @@ def build_agent_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict
         "activityRings": activity,
         "workouts": workouts,
         "special": special,
+        "sleepIntervals": sleep_intervals,
     }
 
 

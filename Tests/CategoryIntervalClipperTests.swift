@@ -37,6 +37,20 @@ struct CategoryIntervalClipperTests {
             sampleEnd: start,
             to: start..<end
         ) == nil)
+
+        let sleepRows = CategoryIntervalClipper.sleepIntervals(samples: [
+            (date("2025-07-17T02:00:00Z"), date("2025-07-17T03:00:00Z"), 5),
+            (date("2025-07-16T23:30:00Z"), date("2025-07-17T00:30:00Z"), 3),
+            (date("2025-07-17T02:00:00Z"), date("2025-07-17T03:00:00Z"), 4),
+            (date("2025-07-17T02:00:00Z"), date("2025-07-17T03:00:00Z"), 4),
+            (date("2025-07-17T04:00:00Z"), date("2025-07-17T04:00:00Z"), 3),
+            (date("2025-07-17T05:00:00Z"), date("2025-07-17T06:00:00Z"), 99),
+        ], to: start..<end)
+        precondition(sleepRows == [
+            .init(start: start, end: date("2025-07-17T00:30:00Z"), value: "asleepCore"),
+            .init(start: date("2025-07-17T02:00:00Z"), end: date("2025-07-17T03:00:00Z"), value: "asleepDeep"),
+            .init(start: date("2025-07-17T02:00:00Z"), end: date("2025-07-17T03:00:00Z"), value: "asleepREM"),
+        ])
     }
 
     private static func date(_ value: String) -> Date {

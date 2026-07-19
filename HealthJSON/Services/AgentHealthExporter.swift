@@ -55,6 +55,9 @@ actor AgentHealthExporter {
         }
         print("HealthJSON agent categories ready: \(categories.count)")
 
+        let sleepIntervals = try await sleepIntervalPayload(start: start, end: end)
+        print("HealthJSON agent sleep intervals ready: \(sleepIntervals.count)")
+
         let workouts = try await workoutPayload(start: start, end: end, units: units)
         print("HealthJSON agent workouts ready: \(workouts.count)")
         let activity = try await activityPayload(start: start, end: generatedAt)
@@ -80,14 +83,16 @@ actor AgentHealthExporter {
             "rowFormats": [
                 "cumulativeMetric": ["date", "sum"],
                 "discreteMetric": ["date", "average", "minimum", "maximum", "latest"],
-                "categoryDay": ["date", ["value", "count", "minutes"]]
+                "categoryDay": ["date", ["value", "count", "minutes"]],
+                "sleepInterval": ["start", "end", "value"]
             ],
             "profile": profilePayload(),
             "metrics": metrics,
             "categories": categories,
             "activityRings": activity,
             "workouts": workouts,
-            "special": special
+            "special": special,
+            "sleepIntervals": sleepIntervals
         ]
 
         let (location, fileURL) = try await cloudStore.writeAgentSnapshot(payload)
@@ -95,7 +100,7 @@ actor AgentHealthExporter {
         return (
             ExportStatistics(
                 filesWritten: 1,
-                samplesAdded: metrics.count + categories.count + workouts.count + activity.count
+                samplesAdded: metrics.count + categories.count + workouts.count + activity.count + sleepIntervals.count
             ),
             location,
             fileURL
@@ -242,6 +247,16 @@ actor AgentHealthExporter {
                 "activityCode": workout.workoutActivityType.rawValue,
                 "statistics": statistics
             ]
+        }
+    }
+
+    private func sleepIntervalPayload(start: Date, end: Date) async throws -> [[String]] {
+        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
+        let samples = try await samples(of: type, start: start, end: end)
+            .compactMap { $0 as? HKCategorySample }
+            .map { (start: $0.startDate, end: $0.endDate, value: $0.value) }
+        return CategoryIntervalClipper.sleepIntervals(samples: samples, to: start..<end).map {
+            [Self.iso8601.string(from: $0.start), Self.iso8601.string(from: $0.end), $0.value]
         }
     }
 

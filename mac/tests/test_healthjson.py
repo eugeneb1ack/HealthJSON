@@ -133,6 +133,55 @@ class HealthJSONTests(unittest.TestCase):
             context = healthjson.load_agent_context(path)
             self.assertIn("oxygenSaturation", context["metrics"])
 
+    def test_agent_context_validates_sleep_intervals(self):
+        base = {
+            "schemaVersion": 1,
+            "kind": "health-agent-context",
+            "generatedAt": "2026-07-11T10:00:00Z",
+            "period": {"start": "2025-07-11", "end": "2026-07-11", "timeZone": "Europe/Moscow"},
+            "rowFormats": {"sleepInterval": ["start", "end", "value"]},
+            "profile": {},
+            "metrics": {},
+            "categories": {},
+            "activityRings": [],
+            "workouts": [],
+            "special": {},
+        }
+        valid = ["2026-07-10T23:00:00+03:00", "2026-07-11T07:00:00+03:00", "asleepCore"]
+        invalid_rows = (
+            [valid[:2]],
+            [["2026-07-10T23:00:00", valid[1], valid[2]]],
+            [[valid[0], valid[1], "value_99"]],
+            [[valid[1], valid[0], valid[2]]],
+            [[valid[0], "2026-07-12T12:00:01+03:00", valid[2]]],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base["sleepIntervals"] = [valid]
+            path = self.write_export(root, "valid.json", base)
+            self.assertEqual(healthjson.load_agent_context(path)["sleepIntervals"], [valid])
+            for index, rows in enumerate(invalid_rows):
+                with self.subTest(index=index):
+                    payload = dict(base, sleepIntervals=rows)
+                    bad_path = self.write_export(root, f"bad-{index}.json", payload)
+                    with self.assertRaises(healthjson.ExportValidationError):
+                        healthjson.load_agent_context(bad_path)
+
+    def test_agent_context_rejects_unbounded_sleep_interval_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = ["2026-07-10T23:00:00+03:00", "2026-07-11T07:00:00+03:00", "asleepCore"]
+            path = self.write_export(Path(directory), "too-many.json", {
+                "schemaVersion": 1,
+                "kind": "health-agent-context",
+                "generatedAt": "2026-07-11T10:00:00Z",
+                "period": {"start": "2025-07-11", "end": "2026-07-11", "timeZone": "Europe/Moscow"},
+                "rowFormats": {"sleepInterval": ["start", "end", "value"]},
+                "profile": {}, "metrics": {}, "categories": {}, "activityRings": [], "workouts": [], "special": {},
+                "sleepIntervals": [row] * 10_001,
+            })
+            with self.assertRaises(healthjson.ExportValidationError):
+                healthjson.load_agent_context(path)
+
     def test_compact_agent_context_filters_old_days(self):
         context = {
             "generatedAt": "2026-07-11T10:00:00Z",
@@ -151,6 +200,43 @@ class HealthJSONTests(unittest.TestCase):
         }
         compact = healthjson.compact_agent_context(context, 7)
         self.assertEqual(compact["metrics"]["heartRate"]["daily"], [["2026-07-10", 62]])
+
+    def test_compact_agent_context_keeps_sleep_interval_overlapping_window(self):
+        context = {
+            "generatedAt": "2026-07-11T10:00:00Z",
+            "period": {"end": "2026-07-11", "timeZone": "Europe/Moscow"},
+            "rowFormats": {"sleepInterval": ["start", "end", "value"]},
+            "profile": {}, "metrics": {}, "categories": {}, "activityRings": [], "workouts": [], "special": {},
+            "sleepIntervals": [
+                ["2026-07-04T23:30:00+03:00", "2026-07-05T07:00:00+03:00", "asleepCore"],
+                ["2026-07-04T20:00:00+03:00", "2026-07-04T23:00:00+03:00", "asleepCore"],
+            ],
+        }
+
+        compact = healthjson.compact_agent_context(context, 7)
+
+        self.assertEqual(compact["sleepIntervals"], [context["sleepIntervals"][0]])
+
+    def test_old_to_new_delta_reports_sleep_intervals(self):
+        base = {
+            "kind": "health-agent-context-window",
+            "sourceGeneratedAt": "2026-07-11T10:00:00Z",
+            "window": {"start": "2025-07-12", "end": "2026-07-11", "days": 365},
+            "rowFormats": {},
+            "profile": {}, "metrics": {}, "categories": {}, "activityRings": [], "workouts": [], "special": {},
+        }
+        current = dict(base)
+        current["sourceGeneratedAt"] = "2026-07-11T11:00:00Z"
+        current["rowFormats"] = {"sleepInterval": ["start", "end", "value"]}
+        current["sleepIntervals"] = [[
+            "2026-07-10T23:00:00+03:00", "2026-07-11T07:00:00+03:00", "asleepCore",
+        ]]
+
+        delta = healthjson.build_agent_delta(base, current)
+
+        self.assertTrue(delta["hasDataChanges"])
+        self.assertEqual(delta["sleepIntervals"]["added"], current["sleepIntervals"])
+        self.assertEqual(delta["sleepIntervals"]["removed"], [])
 
     def test_agent_delta_initial_unchanged_and_changed(self):
         with tempfile.TemporaryDirectory() as directory:
