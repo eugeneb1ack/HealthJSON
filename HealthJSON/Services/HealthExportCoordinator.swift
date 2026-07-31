@@ -28,9 +28,12 @@ final class HealthExportCoordinator: ObservableObject {
     private let readableTypesKey = "health-json.readable-types"
     private let lastSyncKey = "health-json.last-sync"
     private let lastBackgroundSyncKey = "health-json.last-background-sync"
+    private let lastFullSyncKey = "health-json.last-full-sync"
     private let automaticSyncKey = "health-json.automatic-sync-enabled"
     private let automaticChangesPendingKey = "health-json.automatic-changes-pending"
-    private let minimumAutomaticInterval: TimeInterval = 60 * 60
+    private let minimumAutomaticInterval: TimeInterval = 5 * 60
+    private let fullReconciliationInterval: TimeInterval = 24 * 60 * 60
+    private var lastFullSyncDate: Date?
 
     private init() {
         let store = HKHealthStore()
@@ -44,6 +47,7 @@ final class HealthExportCoordinator: ObservableObject {
         readableTypeIdentifiers = Set(UserDefaults.standard.stringArray(forKey: readableTypesKey) ?? [])
         lastSyncDate = UserDefaults.standard.object(forKey: lastSyncKey) as? Date
         lastBackgroundSyncDate = UserDefaults.standard.object(forKey: lastBackgroundSyncKey) as? Date
+        lastFullSyncDate = UserDefaults.standard.object(forKey: lastFullSyncKey) as? Date
 
         Task {
             exportLocation = try? await engine.exportLocation()
@@ -68,10 +72,11 @@ final class HealthExportCoordinator: ObservableObject {
                 }
 
                 Task { @MainActor in
-                    completion()
                     self.markAutomaticChangesPending()
-                    guard self.automaticSyncEnabled else { return }
-                    _ = await self.performAutomaticRefreshIfDue()
+                    if self.automaticSyncEnabled {
+                        _ = await self.performAutomaticRefreshIfDue()
+                    }
+                    completion()
                 }
             }
             observerQueries[type.identifier] = query
@@ -224,13 +229,18 @@ final class HealthExportCoordinator: ObservableObject {
     private func performAutomaticRefreshIfDue(force: Bool = false) async -> Bool {
         guard automaticChangesPending else { return true }
         if !force,
-           let lastSyncDate,
-           Date().timeIntervalSince(lastSyncDate) < minimumAutomaticInterval {
+           let lastBackgroundSyncDate,
+           Date().timeIntervalSince(lastBackgroundSyncDate) < minimumAutomaticInterval {
             return true
         }
 
         let generation = automaticChangeGeneration
-        let success = await runAgentExport(isBackground: true)
+        let needsFullReconciliation = lastFullSyncDate == nil
+            || Date().timeIntervalSince(lastFullSyncDate ?? .distantPast) >= fullReconciliationInterval
+        let success = await runAgentExport(
+            isBackground: true,
+            fullReconciliation: needsFullReconciliation
+        )
         if success {
             clearAutomaticChangesPending(ifGenerationIs: generation)
         }
@@ -255,7 +265,10 @@ final class HealthExportCoordinator: ObservableObject {
             .appendingPathComponent("Agent/health-context.json")
     }
 
-    private func runAgentExport(isBackground: Bool) async -> Bool {
+    private func runAgentExport(
+        isBackground: Bool,
+        fullReconciliation: Bool = false
+    ) async -> Bool {
         guard hasRequestedAuthorization, !agentExportRunning else { return false }
         agentExportRunning = true
         defer { agentExportRunning = false }
@@ -264,9 +277,19 @@ final class HealthExportCoordinator: ObservableObject {
             phase = .exporting(current: 1, total: 1, type: "единый файл")
         }
         do {
-            let result = try await engine.exportAgentContext()
+            let writesFullSnapshot = !isBackground || fullReconciliation
+            let result: (ExportStatistics, ExportLocation, URL)
+            if writesFullSnapshot {
+                result = try await engine.exportAgentContext()
+            } else {
+                result = try await engine.exportAgentUpdate()
+            }
             exportLocation = result.1
-            agentFileURL = result.2
+            if writesFullSnapshot {
+                agentFileURL = result.2
+                lastFullSyncDate = Date()
+                UserDefaults.standard.set(lastFullSyncDate, forKey: lastFullSyncKey)
+            }
             lastSyncDate = Date()
             UserDefaults.standard.set(lastSyncDate, forKey: lastSyncKey)
             if isBackground {
@@ -289,7 +312,7 @@ final class HealthExportCoordinator: ObservableObject {
         var enabled = 0
         for type in HealthDataCatalog.backgroundDeliveryTypes {
             do {
-                try await healthStore.enableBackgroundDelivery(for: type, frequency: .hourly)
+                try await healthStore.enableBackgroundDelivery(for: type, frequency: .immediate)
                 enabled += 1
             } catch {
                 continue

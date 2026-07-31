@@ -6,6 +6,7 @@ actor AgentHealthExporter {
     private let cloudStore: CloudExportStore
     private let calendar = Calendar.autoupdatingCurrent
     private let historyDays = 365
+    private let recentUpdateDays = 3
 
     init(healthStore: HKHealthStore, cloudStore: CloudExportStore) {
         self.healthStore = healthStore
@@ -13,11 +14,23 @@ actor AgentHealthExporter {
     }
 
     func export() async throws -> (ExportStatistics, ExportLocation, URL) {
-        print("HealthJSON agent export started")
+        try await export(days: historyDays, isDelta: false)
+    }
+
+    func exportRecentUpdate() async throws -> (ExportStatistics, ExportLocation, URL) {
+        try await export(days: recentUpdateDays, isDelta: true)
+    }
+
+    private func export(
+        days: Int,
+        isDelta: Bool
+    ) async throws -> (ExportStatistics, ExportLocation, URL) {
+        print("HealthJSON agent \(isDelta ? "delta" : "full") export started")
         let generatedAt = Date()
         let today = calendar.startOfDay(for: generatedAt)
         let end = calendar.date(byAdding: .day, value: 1, to: today) ?? generatedAt
-        let start = calendar.date(byAdding: .day, value: -historyDays, to: today) ?? today
+        let startOffset = isDelta ? -(days - 1) : -days
+        let start = calendar.date(byAdding: .day, value: startOffset, to: today) ?? today
         let units = try await healthStore.preferredUnits(for: Set(HealthDataCatalog.quantityTypes))
 
         let metrics = try await withThrowingTaskGroup(of: (String, [String: Any]?).self) { group in
@@ -64,20 +77,28 @@ actor AgentHealthExporter {
         print("HealthJSON agent activity ready: \(activity.count)")
         let special = try await specialPayload(start: start, end: end)
         print("HealthJSON agent special ready: \(special.count)")
+        let exportedWorkouts = isDelta ? [] : workouts
         let payload: [String: Any] = [
             "schemaVersion": 1,
-            "kind": "health-agent-context",
+            "kind": isDelta ? "health-agent-delta" : "health-agent-context",
             "generatedAt": Self.iso8601.string(from: generatedAt),
-            "updateSemantics": [
-                "mode": "atomicFullSnapshot",
-                "replacesPreviousFile": true,
-                "appendOnly": false,
-                "readerInstruction": "Process only when generatedAt changes. This file is a complete replacement snapshot."
-            ],
+            "updateSemantics": isDelta
+                ? [
+                    "mode": "replaceWindow",
+                    "replacesPreviousFile": false,
+                    "appendOnly": false,
+                    "readerInstruction": "Replace normalized rows only within the declared period."
+                ]
+                : [
+                    "mode": "atomicFullSnapshot",
+                    "replacesPreviousFile": true,
+                    "appendOnly": false,
+                    "readerInstruction": "Process only when generatedAt changes. This file is a complete replacement snapshot."
+                ],
             "period": [
                 "start": Self.dayFormatter.string(from: start),
                 "end": Self.dayFormatter.string(from: generatedAt),
-                "days": historyDays,
+                "days": days,
                 "timeZone": TimeZone.autoupdatingCurrent.identifier
             ],
             "rowFormats": [
@@ -90,17 +111,23 @@ actor AgentHealthExporter {
             "metrics": metrics,
             "categories": categories,
             "activityRings": activity,
-            "workouts": workouts,
+            "workouts": exportedWorkouts,
             "special": special,
             "sleepIntervals": sleepIntervals
         ]
 
-        let (location, fileURL) = try await cloudStore.writeAgentSnapshot(payload)
+        let writeResult: (ExportLocation, URL)
+        if isDelta {
+            writeResult = try await cloudStore.writeAgentUpdate(payload)
+        } else {
+            writeResult = try await cloudStore.writeAgentSnapshot(payload)
+        }
+        let (location, fileURL) = writeResult
         print("HealthJSON agent export wrote \(fileURL.path)")
         return (
             ExportStatistics(
                 filesWritten: 1,
-                samplesAdded: metrics.count + categories.count + workouts.count + activity.count + sleepIntervals.count
+                samplesAdded: metrics.count + categories.count + exportedWorkouts.count + activity.count + sleepIntervals.count
             ),
             location,
             fileURL

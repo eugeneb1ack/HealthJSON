@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     static func scheduleBackgroundRefresh() {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: refreshTaskIdentifier)
         let request = BGAppRefreshTaskRequest(identifier: refreshTaskIdentifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {

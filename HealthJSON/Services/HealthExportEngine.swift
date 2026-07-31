@@ -123,6 +123,12 @@ actor HealthExportEngine {
         return try await agentExporter.export()
     }
 
+    func exportAgentUpdate() async throws -> (ExportStatistics, ExportLocation, URL) {
+        await acquireExclusiveAccess()
+        defer { releaseExclusiveAccess() }
+        return try await agentExporter.exportRecentUpdate()
+    }
+
     func makeAgentSnapshotShareCopy() async throws -> URL {
         await acquireExclusiveAccess()
         defer { releaseExclusiveAccess() }

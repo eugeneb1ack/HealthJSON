@@ -15,6 +15,7 @@ final class CloudExportStore {
     private let fileManager: FileManager
     private let folderAccess: ExportFolderAccess
     private let encoder: JSONSerialization.WritingOptions = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    private let updateRetention: TimeInterval = 7 * 24 * 60 * 60
 
     init(
         fileManager: FileManager = .default,
@@ -114,10 +115,7 @@ final class CloudExportStore {
            Self.hasHealthContent(existingObject) {
             throw CloudExportStoreError.wouldReplacePopulatedSnapshotWithEmpty
         }
-        try data.write(
-            to: destination,
-            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-        )
+        try coordinatedWrite(data, to: destination)
         if let documents = try? fileManager.url(
             for: .documentDirectory,
             in: .userDomainMask,
@@ -126,6 +124,31 @@ final class CloudExportStore {
         ) {
             try? fileManager.removeItem(at: documents.appendingPathComponent("AgentDebug", isDirectory: true))
         }
+        return (location, destination)
+    }
+
+    func writeAgentUpdate(_ object: [String: Any]) async throws -> (ExportLocation, URL) {
+        let data = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        let location = try await resolveLocation()
+        let selectedFolder = folderAccess.resolve()
+        let startedAccess = selectedFolder?.startAccessingSecurityScopedResource() ?? false
+        defer {
+            if startedAccess { selectedFolder?.stopAccessingSecurityScopedResource() }
+        }
+
+        let inbox = location.url
+            .deletingLastPathComponent()
+            .appendingPathComponent("Agent/Inbox", isDirectory: true)
+        try fileManager.createDirectory(at: inbox, withIntermediateDirectories: true)
+        try pruneAgentUpdates(in: inbox, before: Date().addingTimeInterval(-updateRetention))
+
+        let milliseconds = Int64((Date().timeIntervalSince1970 * 1_000).rounded())
+        let filename = "health-update-\(milliseconds)-\(UUID().uuidString.lowercased()).json"
+        let destination = inbox.appendingPathComponent(filename)
+        try coordinatedWrite(data, to: destination)
         return (location, destination)
     }
 
@@ -162,6 +185,42 @@ final class CloudExportStore {
         }
         let arrays = ["activityRings", "workouts"]
         return arrays.contains { !(object[$0] as? [Any] ?? []).isEmpty }
+    }
+
+    private func coordinatedWrite(_ data: Data, to destination: URL) throws {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var writeError: Error?
+        let options: NSFileCoordinator.WritingOptions = fileManager.fileExists(atPath: destination.path)
+            ? .forReplacing
+            : []
+        coordinator.coordinate(writingItemAt: destination, options: options, error: &coordinationError) { url in
+            do {
+                try data.write(
+                    to: url,
+                    options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+                )
+            } catch {
+                writeError = error
+            }
+        }
+        if let writeError { throw writeError }
+        if let coordinationError { throw coordinationError }
+    }
+
+    private func pruneAgentUpdates(in inbox: URL, before cutoff: Date) throws {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isRegularFileKey]
+        for url in try fileManager.contentsOfDirectory(
+            at: inbox,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) where url.lastPathComponent.hasPrefix("health-update-") && url.pathExtension == "json" {
+            let values = try? url.resourceValues(forKeys: keys)
+            guard values?.isRegularFile == true,
+                  let modified = values?.contentModificationDate,
+                  modified < cutoff else { continue }
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     private static let fileDateFormatter: DateFormatter = {

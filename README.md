@@ -4,17 +4,17 @@ Health JSON is a private iPhone exporter for Apple Health data. Its primary outp
 
 The AI file covers the most recent 365 days. Cumulative metrics such as steps, distance, and energy are summed by day. Discrete measurements such as heart rate, oxygen saturation, HRV, respiratory rate, temperature, blood pressure, glucose, and body measurements include daily average, minimum, maximum, and latest values. Sleep is split into stages and duration, with activity rings, workouts, symptoms, ECG summaries, mental-state entries, and assessments where available. UUIDs, device details, source applications, and arbitrary metadata are omitted to save model context.
 
-Each update is a complete snapshot, not an append operation. The app atomically replaces `health-context.json`; readers use `generatedAt` as its revision and skip processing when that value has not changed. Automatic synchronization coalesces detected changes and rewrites the file no more than once per hour. It can be paused or resumed in the app; manual **Update single JSON** always runs immediately.
+The canonical `health-context.json` is a complete snapshot. Automatic synchronization coalesces HealthKit events for up to five minutes and writes small immutable three-day window updates under `Agent/Inbox`, avoiding concurrent replacement and iCloud conflict copies. A daily full snapshot reconciles older corrections. Synchronization can be paused or resumed in the app; manual **Update single JSON** always writes a complete snapshot immediately.
 
 ## Architecture
 
 1. The app requests read-only HealthKit access.
 2. HealthKit statistics merge duplicate sources and generate compact daily health aggregates.
-3. `HKObserverQuery` marks supported HealthKit changes as pending. Hourly background delivery and `BGAppRefreshTask` then refresh the file when iOS grants execution time.
+3. `HKObserverQuery` marks supported HealthKit changes as pending. Immediate background delivery writes a coalesced recent-window update when iOS grants execution time; `BGAppRefreshTask` retries pending work and performs periodic reconciliation.
 4. The complete agent context is written atomically to one stable file, so readers never see a partial JSON document.
 5. An optional technical raw archive remains available under **Health JSON → Exports** for detailed debugging, but an AI agent should read only the file under **Agent**.
 
-There is intentionally no fixed timer. One hour is a minimum interval between automatic writes, not a guaranteed deadline: iOS decides when background work runs and may coalesce HealthKit updates. Pending state survives an app restart, and manual sync is always available.
+There is intentionally no fixed timer. Five minutes is a coalescing interval, not a guaranteed deadline: iOS decides when background work runs and may throttle HealthKit delivery. Pending state survives an app restart, immutable update files are retained for seven days, and manual sync is always available.
 
 ## Run on an iPhone
 
