@@ -23,9 +23,6 @@ enum HealthDataCatalog {
         types.append(HKObjectType.stateOfMindType())
         types.append(HKObjectType.medicationDoseEventType())
         types.append(HKObjectType.visionPrescriptionType())
-        if let cda = HKObjectType.documentType(forIdentifier: HKDocumentTypeIdentifier(rawValue: "HKDocumentTypeIdentifierCDA")) {
-            types.append(cda)
-        }
 
         return Dictionary(grouping: types, by: \.identifier)
             .compactMap(\.value.first)
@@ -33,13 +30,10 @@ enum HealthDataCatalog {
     }
 
     static var readTypes: Set<HKObjectType> {
-        let directlyAuthorizableSamples = sampleTypes.filter {
-            !($0 is HKCorrelationType)
-                && $0 != HKObjectType.visionPrescriptionType()
-                && $0 != HKObjectType.medicationDoseEventType()
-        }
+        let directlyAuthorizableSamples = sampleTypes
         return Set(directlyAuthorizableSamples.map { $0 as HKObjectType } + characteristicTypes + [
-            HKObjectType.activitySummaryType()
+            HKObjectType.activitySummaryType(),
+            HKObjectType.userAnnotatedMedicationType()
         ])
     }
 

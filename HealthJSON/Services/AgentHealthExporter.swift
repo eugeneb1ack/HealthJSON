@@ -77,7 +77,8 @@ actor AgentHealthExporter {
         print("HealthJSON agent activity ready: \(activity.count)")
         let special = try await specialPayload(start: start, end: end)
         print("HealthJSON agent special ready: \(special.count)")
-        let exportedWorkouts = isDelta ? [] : workouts
+        let medications = (try? await medicationPayload()) ?? []
+        print("HealthJSON agent medications ready: \(medications.count)")
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "kind": isDelta ? "health-agent-delta" : "health-agent-context",
@@ -111,7 +112,8 @@ actor AgentHealthExporter {
             "metrics": metrics,
             "categories": categories,
             "activityRings": activity,
-            "workouts": exportedWorkouts,
+            "workouts": workouts,
+            "medications": medications,
             "special": special,
             "sleepIntervals": sleepIntervals
         ]
@@ -127,7 +129,8 @@ actor AgentHealthExporter {
         return (
             ExportStatistics(
                 filesWritten: 1,
-                samplesAdded: metrics.count + categories.count + exportedWorkouts.count + activity.count + sleepIntervals.count
+                samplesAdded: metrics.count + categories.count + workouts.count + medications.count
+                    + activity.count + sleepIntervals.count
             ),
             location,
             fileURL
@@ -314,13 +317,17 @@ actor AgentHealthExporter {
         let types: [HKSampleType] = [
             HKObjectType.electrocardiogramType(),
             HKObjectType.stateOfMindType(),
-            HKObjectType.audiogramSampleType()
+            HKObjectType.audiogramSampleType(),
+            HKObjectType.medicationDoseEventType(),
+            HKObjectType.visionPrescriptionType(),
+            HKSeriesType.heartbeat(),
+            HKSeriesType.workoutRoute()
         ] + assessmentTypes
 
         for type in types {
-            let values = try await samples(of: type, start: start, end: end)
+            guard let values = try? await samples(of: type, start: start, end: end) else { continue }
             guard !values.isEmpty else { continue }
-            result[semanticKey(type.identifier)] = values.suffix(100).map { sample in
+            result[semanticKey(type.identifier)] = values.map { sample in
                 var item: [String: Any] = [
                     "start": Self.iso8601.string(from: sample.startDate),
                     "end": Self.iso8601.string(from: sample.endDate)
@@ -328,6 +335,10 @@ actor AgentHealthExporter {
                 if let ecg = sample as? HKElectrocardiogram {
                     item["classification"] = ecg.classification.rawValue
                     item["symptomsStatus"] = ecg.symptomsStatus.rawValue
+                    item["voltageMeasurementCount"] = ecg.numberOfVoltageMeasurements
+                    if let samplingFrequency = ecg.samplingFrequency {
+                        item["samplingFrequencyHz"] = Self.rounded(samplingFrequency.doubleValue(for: .hertz()))
+                    }
                     if let heartRate = ecg.averageHeartRate {
                         item["averageHeartRateBPM"] = Self.rounded(heartRate.doubleValue(
                             for: HKUnit.count().unitDivided(by: .minute())
@@ -342,11 +353,58 @@ actor AgentHealthExporter {
                     item["score"] = assessment.score
                 } else if let audiogram = sample as? HKAudiogramSample {
                     item["frequencyPointCount"] = audiogram.sensitivityPoints.count
+                } else if let dose = sample as? HKMedicationDoseEvent {
+                    item["scheduleType"] = dose.scheduleType.rawValue
+                    item["logStatus"] = dose.logStatus.rawValue
+                    item["medicationConceptDomain"] = dose.medicationConceptIdentifier.domain.rawValue
+                    item["scheduledDate"] = dose.scheduledDate.map(Self.iso8601.string) ?? NSNull()
+                    item["scheduledDoseQuantity"] = dose.scheduledDoseQuantity.map { $0 as Any } ?? NSNull()
+                    item["doseQuantity"] = dose.doseQuantity.map { $0 as Any } ?? NSNull()
+                    item["unit"] = dose.unit.unitString
+                } else if let prescription = sample as? HKVisionPrescription {
+                    item["prescriptionType"] = prescription.prescriptionType.rawValue
+                    item["dateIssued"] = Self.iso8601.string(from: prescription.dateIssued)
+                    item["expirationDate"] = prescription.expirationDate.map(Self.iso8601.string) ?? NSNull()
+                    if let contacts = prescription as? HKContactsPrescription {
+                        item["brand"] = contacts.brand
+                    }
                 }
                 return item
             }
         }
         return result
+    }
+
+    private func medicationPayload() async throws -> [[String: Any]] {
+        let medications: [HKUserAnnotatedMedication] = try await withCheckedThrowingContinuation { continuation in
+            var values: [HKUserAnnotatedMedication] = []
+            var completed = false
+            let query = HKUserAnnotatedMedicationQuery(
+                predicate: nil,
+                limit: HKObjectQueryNoLimit
+            ) { _, medication, done, error in
+                guard !completed else { return }
+                if let error {
+                    completed = true
+                    continuation.resume(throwing: error)
+                } else if done {
+                    completed = true
+                    continuation.resume(returning: values)
+                } else if let medication {
+                    values.append(medication)
+                }
+            }
+            healthStore.execute(query)
+        }
+        return medications.map { medication in
+            [
+                "nickname": medication.nickname.map { $0 as Any } ?? NSNull(),
+                "isArchived": medication.isArchived,
+                "hasSchedule": medication.hasSchedule,
+                "displayText": medication.medication.displayText,
+                "generalForm": medication.medication.generalForm.rawValue
+            ]
+        }
     }
 
     private func samples(of type: HKSampleType, start: Date, end: Date) async throws -> [HKSample] {
@@ -380,10 +438,18 @@ actor AgentHealthExporter {
         if let sex = try? healthStore.biologicalSex() { result["biologicalSex"] = sex.biologicalSex.rawValue }
         if let blood = try? healthStore.bloodType() { result["bloodType"] = blood.bloodType.rawValue }
         if let wheelchair = try? healthStore.wheelchairUse() { result["wheelchairUse"] = wheelchair.wheelchairUse.rawValue }
+        if let skin = try? healthStore.fitzpatrickSkinType() { result["fitzpatrickSkinType"] = skin.skinType.rawValue }
+        if let moveMode = try? healthStore.activityMoveMode() { result["activityMoveMode"] = moveMode.activityMoveMode.rawValue }
         return result
     }
 
     private func semanticKey(_ identifier: String) -> String {
+        let exactKeys = [
+            "HKMedicationDoseEventTypeIdentifierMedicationDoseEvent": "medicationDoseEvent",
+            "HKVisionPrescriptionTypeIdentifier": "visionPrescription",
+            "HKWorkoutRouteTypeIdentifier": "workoutRoute"
+        ]
+        if let exact = exactKeys[identifier] { return exact }
         let prefixes = [
             "HKQuantityTypeIdentifier", "HKCategoryTypeIdentifier", "HKScoredAssessmentTypeIdentifier",
             "HKDataTypeIdentifier", "HKWorkoutTypeIdentifier", "HK"
