@@ -4,6 +4,17 @@ struct DirectHealthSyncReport: Sendable {
     let deliveredAt: Date?
     let pendingCount: Int
     let message: String?
+    let connectionState: DirectHealthSyncConnectionState
+}
+
+enum DirectHealthSyncConnectionState: Sendable {
+    case idle
+    case checking
+    case connected
+    case unreachable
+    case unauthorized
+    case serverUnavailable
+    case notConfigured
 }
 
 actor DirectHealthSyncClient {
@@ -42,10 +53,10 @@ actor DirectHealthSyncClient {
 
     func enqueueAndFlush(_ payload: Data) async -> DirectHealthSyncReport {
         guard endpoint != nil else {
-            return report(message: "Прямая доставка не настроена")
+            return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
         }
         guard !payload.isEmpty, payload.count <= maximumPayloadBytes else {
-            return report(message: "Обновление слишком большое для прямой доставки")
+            return report(message: "Обновление слишком большое для прямой доставки", connectionState: .serverUnavailable)
         }
         do {
             let directory = try queueDirectory()
@@ -59,27 +70,56 @@ actor DirectHealthSyncClient {
             try pruneQueue(in: directory)
             return await flush(force: true)
         } catch {
-            return report(message: "Не удалось поставить обновление в очередь")
+            return report(message: "Не удалось поставить обновление в очередь", connectionState: .serverUnavailable)
+        }
+    }
+
+    func checkConnection() async -> DirectHealthSyncReport {
+        guard let healthURL else {
+            return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
+        }
+
+        var request = URLRequest(url: healthURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return report(message: "Нет связи с Mac", connectionState: .unreachable)
+            }
+            switch http.statusCode {
+            case 200..<300:
+                return report(message: nil, connectionState: .connected)
+            case 401, 403:
+                return report(message: "Tailscale не подтвердил доступ", connectionState: .unauthorized)
+            case 500..<600:
+                return report(message: "Mac временно недоступен", connectionState: .serverUnavailable)
+            default:
+                return report(message: "Endpoint тренера недоступен", connectionState: .serverUnavailable)
+            }
+        } catch {
+            return report(message: "Нет связи с Mac", connectionState: .unreachable)
         }
     }
 
     func flush(force: Bool = false) async -> DirectHealthSyncReport {
         guard let endpoint else {
-            return report(message: "Прямая доставка не настроена")
+            return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
         }
         if !force,
            let nextRetry = defaults.object(forKey: nextRetryKey) as? Date,
            nextRetry > Date() {
-            return report(message: "Ожидается повторная отправка")
+            return report(message: "Ожидается повторная отправка", connectionState: .unreachable)
         }
         let files: [URL]
         do {
             files = try pendingFiles()
         } catch {
-            return report(message: "Очередь отправки недоступна")
+            return report(message: "Очередь отправки недоступна", connectionState: .serverUnavailable)
         }
         guard !files.isEmpty else {
-            return report(message: nil)
+            return report(message: nil, connectionState: .idle)
         }
 
         var deliveredAt = defaults.object(forKey: lastDeliveryKey) as? Date
@@ -110,23 +150,36 @@ actor DirectHealthSyncClient {
                 case 422:
                     try fileManager.removeItem(at: file)
                     clearBackoff()
-                    return report(message: "Mac отклонил некорректное обновление")
+                    return report(message: "Mac отклонил некорректное обновление", connectionState: .serverUnavailable)
                 case 401, 403:
                     scheduleRetry()
-                    return report(message: "Tailscale не подтвердил доступ")
+                    return report(message: "Tailscale не подтвердил доступ", connectionState: .unauthorized)
                 case 500..<600:
                     scheduleRetry()
-                    return report(message: "Mac временно недоступен")
+                    return report(message: "Mac временно недоступен", connectionState: .serverUnavailable)
                 default:
                     scheduleRetry()
-                    return report(message: "Mac отклонил обновление")
+                    return report(message: "Mac отклонил обновление", connectionState: .serverUnavailable)
                 }
             } catch {
                 scheduleRetry()
-                return report(message: "Нет связи с Mac — обновление сохранено")
+                return report(message: "Нет связи с Mac — обновление сохранено", connectionState: .unreachable)
             }
         }
-        return report(deliveredAt: deliveredAt, message: nil)
+        return report(deliveredAt: deliveredAt, message: nil, connectionState: .connected)
+    }
+
+    private var healthURL: URL? {
+        guard let endpoint,
+              var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
+              let importRange = components.path.range(of: "/v1/import", options: .backwards)
+        else {
+            return nil
+        }
+        components.path.replaceSubrange(importRange, with: "/health")
+        components.query = nil
+        components.fragment = nil
+        return components.url
     }
 
     private func queueDirectory() throws -> URL {
@@ -177,11 +230,16 @@ actor DirectHealthSyncClient {
         defaults.removeObject(forKey: nextRetryKey)
     }
 
-    private func report(deliveredAt: Date? = nil, message: String?) -> DirectHealthSyncReport {
+    private func report(
+        deliveredAt: Date? = nil,
+        message: String?,
+        connectionState: DirectHealthSyncConnectionState
+    ) -> DirectHealthSyncReport {
         DirectHealthSyncReport(
             deliveredAt: deliveredAt ?? defaults.object(forKey: lastDeliveryKey) as? Date,
             pendingCount: (try? pendingFiles().count) ?? 0,
-            message: message
+            message: message,
+            connectionState: connectionState
         )
     }
 }

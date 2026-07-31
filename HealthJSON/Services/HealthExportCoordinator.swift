@@ -12,11 +12,13 @@ final class HealthExportCoordinator: ObservableObject {
     @Published private(set) var lastDirectSyncDate: Date?
     @Published private(set) var directSyncPendingCount = 0
     @Published private(set) var directSyncMessage: String?
+    @Published private(set) var directSyncConnectionState: DirectHealthSyncConnectionState = .idle
     @Published private(set) var agentFileURL: URL?
     @Published private(set) var hasRequestedAuthorization: Bool
     @Published private(set) var backgroundDeliveryEnabled = false
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticChangesPending: Bool
+    @Published private(set) var directSyncEnabled: Bool
 
     let healthStore: HKHealthStore
     let supportedTypeCount = HealthDataCatalog.sampleTypes.count
@@ -34,6 +36,7 @@ final class HealthExportCoordinator: ObservableObject {
     private let lastBackgroundSyncKey = "health-json.last-background-sync"
     private let lastFullSyncKey = "health-json.last-full-sync"
     private let automaticSyncKey = "health-json.automatic-sync-enabled"
+    private let directSyncEnabledKey = "health-json.direct.enabled"
     private let automaticChangesPendingKey = "health-json.automatic-changes-pending"
     private let lastDirectSyncKey = "health-json.direct.last-delivery"
     private let minimumAutomaticInterval: TimeInterval = 5 * 60
@@ -48,6 +51,9 @@ final class HealthExportCoordinator: ObservableObject {
         automaticSyncEnabled = UserDefaults.standard.object(forKey: automaticSyncKey) == nil
             ? true
             : UserDefaults.standard.bool(forKey: automaticSyncKey)
+        directSyncEnabled = UserDefaults.standard.object(forKey: directSyncEnabledKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: directSyncEnabledKey)
         automaticChangesPending = UserDefaults.standard.bool(forKey: automaticChangesPendingKey)
         readableTypeIdentifiers = Set(UserDefaults.standard.stringArray(forKey: readableTypesKey) ?? [])
         lastSyncDate = UserDefaults.standard.object(forKey: lastSyncKey) as? Date
@@ -92,7 +98,9 @@ final class HealthExportCoordinator: ObservableObject {
         if hasRequestedAuthorization, automaticSyncEnabled {
             Task {
                 await enableBackgroundDelivery()
-                await retryPendingDirectUploads()
+                if directSyncEnabled {
+                    await retryPendingDirectUploads()
+                }
             }
         }
     }
@@ -156,6 +164,29 @@ final class HealthExportCoordinator: ObservableObject {
             }
             backgroundDeliveryEnabled = false
         }
+    }
+
+    func setDirectSyncEnabled(_ enabled: Bool) async {
+        directSyncEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: directSyncEnabledKey)
+        if enabled {
+            directSyncConnectionState = .checking
+            directSyncMessage = "Проверка соединения…"
+            await retryPendingDirectUploads(force: true)
+            if directSyncConnectionState == .idle {
+                await checkDirectSyncConnection()
+            }
+        } else {
+            directSyncConnectionState = .idle
+            directSyncMessage = nil
+        }
+    }
+
+    func checkDirectSyncConnection() async {
+        guard directSyncEnabled else { return }
+        directSyncConnectionState = .checking
+        directSyncMessage = "Проверка соединения…"
+        applyDirectSyncReport(await directSync.checkConnection())
     }
 
     func selectExportFolder(_ url: URL) async {
@@ -233,7 +264,9 @@ final class HealthExportCoordinator: ObservableObject {
 
     func performScheduledRefresh() async -> Bool {
         guard automaticSyncEnabled else { return false }
-        await retryPendingDirectUploads()
+        if directSyncEnabled {
+            await retryPendingDirectUploads()
+        }
         return await performAutomaticRefreshIfDue()
     }
 
@@ -296,7 +329,9 @@ final class HealthExportCoordinator: ObservableObject {
                 result = try await engine.exportAgentUpdate()
             }
             exportLocation = result.1
-            applyDirectSyncReport(await directSync.enqueueAndFlush(result.3))
+            if directSyncEnabled {
+                applyDirectSyncReport(await directSync.enqueueAndFlush(result.3))
+            }
             if writesFullSnapshot {
                 agentFileURL = result.2
                 lastFullSyncDate = Date()
@@ -334,6 +369,7 @@ final class HealthExportCoordinator: ObservableObject {
     }
 
     private func retryPendingDirectUploads(force: Bool = false) async {
+        guard directSyncEnabled else { return }
         applyDirectSyncReport(await directSync.flush(force: force))
     }
 
@@ -341,6 +377,7 @@ final class HealthExportCoordinator: ObservableObject {
         lastDirectSyncDate = report.deliveredAt
         directSyncPendingCount = report.pendingCount
         directSyncMessage = report.message
+        directSyncConnectionState = report.connectionState
     }
 
     private func readableName(_ identifier: String) -> String {

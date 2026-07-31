@@ -30,6 +30,9 @@ struct ContentView: View {
                 ActivityView(items: [item.url])
             }
         }
+        .task {
+            await coordinator.checkDirectSyncConnection()
+        }
     }
 
     private var header: some View {
@@ -80,11 +83,9 @@ struct ContentView: View {
             )
             Divider().padding(.leading, 44)
             statusRow(
-                icon: coordinator.directSyncPendingCount > 0 ? "clock.arrow.circlepath" : "paperplane.circle.fill",
-                color: coordinator.directSyncPendingCount > 0
-                    ? .orange
-                    : (coordinator.lastDirectSyncDate == nil ? .secondary : .green),
-                title: "Доставка тренеру",
+                icon: directSyncIcon,
+                color: directSyncColor,
+                title: "Tailscale → тренер",
                 value: directSyncText
             )
             Divider().padding(.leading, 44)
@@ -131,6 +132,30 @@ struct ContentView: View {
                             : "При изменениях HealthKit: напрямую на Mac, с объединением до 5 минут. iCloud остаётся резервом.")
                         : "Автоматическое обновление приостановлено."
                 )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                Toggle(
+                    "Отправлять через Tailscale",
+                    isOn: Binding(
+                        get: { coordinator.directSyncEnabled },
+                        set: { enabled in
+                            Task { await coordinator.setDirectSyncEnabled(enabled) }
+                        }
+                    )
+                )
+                .tint(.blue)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text(directSyncHelpText)
+                    Spacer(minLength: 8)
+                    if coordinator.directSyncEnabled {
+                        Button("Проверить") {
+                            Task { await coordinator.checkDirectSyncConnection() }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -236,7 +261,7 @@ struct ContentView: View {
             Text("Данные о здоровье чувствительны. Прямая доставка доступна только внутри вашего зашифрованного Tailscale-соединения; iCloud остаётся резервной копией.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Автосинхронизацию можно приостановить. Неотправленные обновления остаются в защищённой очереди приложения и повторяются с паузой. Ручная кнопка создаёт и отправляет полный снимок сразу. Точное время фонового запуска определяет iOS.")
+            Text("Автосинхронизацию и прямую отправку через Tailscale можно выключать независимо. Неотправленные обновления остаются в защищённой очереди приложения и повторяются после включения. Ручная кнопка всегда обновляет iCloud, а при включённом Tailscale отправляет полный снимок сразу. Точное время фонового запуска определяет iOS.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -276,6 +301,30 @@ struct ContentView: View {
     }
 
     private var directSyncText: String {
+        guard coordinator.directSyncEnabled else {
+            return coordinator.directSyncPendingCount > 0
+                ? "Выключено · в очереди: \(coordinator.directSyncPendingCount)"
+                : "Выключено"
+        }
+        switch coordinator.directSyncConnectionState {
+        case .checking:
+            return "Проверка…"
+        case .connected:
+            if let date = coordinator.lastDirectSyncDate {
+                return "Подключено · \(date.formatted(date: .omitted, time: .shortened))"
+            }
+            return "Подключено"
+        case .unauthorized:
+            return "Нет доступа"
+        case .unreachable:
+            return coordinator.directSyncPendingCount > 0 ? "Нет связи · данные в очереди" : "Нет связи"
+        case .serverUnavailable:
+            return coordinator.directSyncMessage ?? "Mac недоступен"
+        case .notConfigured:
+            return "Не настроено"
+        case .idle:
+            break
+        }
         if coordinator.directSyncPendingCount > 0 {
             return coordinator.directSyncMessage ?? "В очереди: \(coordinator.directSyncPendingCount)"
         }
@@ -283,6 +332,50 @@ struct ContentView: View {
             return coordinator.directSyncMessage ?? "Ожидается отправка"
         }
         return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var directSyncHelpText: String {
+        guard coordinator.directSyncEnabled else {
+            return "Прямая отправка выключена; файл продолжает сохраняться в iCloud."
+        }
+        switch coordinator.directSyncConnectionState {
+        case .connected:
+            return "Защищённый канал до бота-тренера доступен."
+        case .checking:
+            return "Проверяю защищённый канал до Mac."
+        case .unauthorized:
+            return "Mac доступен, но Tailscale не подтвердил пользователя."
+        case .unreachable:
+            return "Включите Tailscale на iPhone и Mac; данные не потеряются."
+        case .serverUnavailable:
+            return "Tailscale доступен, но приёмник тренера не отвечает."
+        case .notConfigured:
+            return "Адрес приёмника не настроен в этой сборке."
+        case .idle:
+            return "Статус обновится при проверке или отправке."
+        }
+    }
+
+    private var directSyncIcon: String {
+        guard coordinator.directSyncEnabled else { return "paperplane.slash.fill" }
+        switch coordinator.directSyncConnectionState {
+        case .connected: return "checkmark.icloud.fill"
+        case .checking: return "arrow.triangle.2.circlepath"
+        case .unauthorized: return "lock.trianglebadge.exclamationmark.fill"
+        case .unreachable, .serverUnavailable: return "wifi.exclamationmark"
+        case .notConfigured: return "gear.badge.xmark"
+        case .idle: return coordinator.directSyncPendingCount > 0 ? "clock.arrow.circlepath" : "paperplane.circle.fill"
+        }
+    }
+
+    private var directSyncColor: Color {
+        guard coordinator.directSyncEnabled else { return .secondary }
+        switch coordinator.directSyncConnectionState {
+        case .connected: return .green
+        case .checking, .idle: return coordinator.directSyncPendingCount > 0 ? .orange : .secondary
+        case .unreachable, .serverUnavailable: return .orange
+        case .unauthorized, .notConfigured: return .red
+        }
     }
 
     private func readableIssueType(_ identifier: String) -> String {
