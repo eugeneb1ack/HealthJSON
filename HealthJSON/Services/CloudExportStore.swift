@@ -92,7 +92,7 @@ final class CloudExportStore {
         return location
     }
 
-    func writeAgentSnapshot(_ object: [String: Any]) async throws -> (ExportLocation, URL) {
+    func writeAgentSnapshot(_ object: [String: Any]) async throws -> (ExportLocation, URL, Data) {
         let data = try JSONSerialization.data(
             withJSONObject: object,
             options: [.sortedKeys, .withoutEscapingSlashes]
@@ -124,10 +124,10 @@ final class CloudExportStore {
         ) {
             try? fileManager.removeItem(at: documents.appendingPathComponent("AgentDebug", isDirectory: true))
         }
-        return (location, destination)
+        return (location, destination, data)
     }
 
-    func writeAgentUpdate(_ object: [String: Any]) async throws -> (ExportLocation, URL) {
+    func writeAgentUpdate(_ object: [String: Any]) async throws -> (ExportLocation, URL, Data) {
         let data = try JSONSerialization.data(
             withJSONObject: object,
             options: [.sortedKeys, .withoutEscapingSlashes]
@@ -149,7 +149,7 @@ final class CloudExportStore {
         let filename = "health-update-\(milliseconds)-\(UUID().uuidString.lowercased()).json"
         let destination = inbox.appendingPathComponent(filename)
         try coordinatedWrite(data, to: destination)
-        return (location, destination)
+        return (location, destination, data)
     }
 
     func makeAgentSnapshotShareCopy() async throws -> URL {

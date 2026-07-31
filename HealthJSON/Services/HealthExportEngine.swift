@@ -117,13 +117,13 @@ actor HealthExportEngine {
         return try await cloudStore.selectFolder(url)
     }
 
-    func exportAgentContext() async throws -> (ExportStatistics, ExportLocation, URL) {
+    func exportAgentContext() async throws -> (ExportStatistics, ExportLocation, URL, Data) {
         await acquireExclusiveAccess()
         defer { releaseExclusiveAccess() }
         return try await agentExporter.export()
     }
 
-    func exportAgentUpdate() async throws -> (ExportStatistics, ExportLocation, URL) {
+    func exportAgentUpdate() async throws -> (ExportStatistics, ExportLocation, URL, Data) {
         await acquireExclusiveAccess()
         defer { releaseExclusiveAccess() }
         return try await agentExporter.exportRecentUpdate()

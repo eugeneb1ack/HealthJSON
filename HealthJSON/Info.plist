@@ -40,6 +40,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>HealthUploadURL</key>
+	<string>https://macbook-pro-john.tail52171.ts.net/health-json/v1/import</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>

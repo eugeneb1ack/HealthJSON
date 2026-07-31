@@ -9,6 +9,9 @@ final class HealthExportCoordinator: ObservableObject {
     @Published private(set) var exportLocation: ExportLocation?
     @Published private(set) var lastSyncDate: Date?
     @Published private(set) var lastBackgroundSyncDate: Date?
+    @Published private(set) var lastDirectSyncDate: Date?
+    @Published private(set) var directSyncPendingCount = 0
+    @Published private(set) var directSyncMessage: String?
     @Published private(set) var agentFileURL: URL?
     @Published private(set) var hasRequestedAuthorization: Bool
     @Published private(set) var backgroundDeliveryEnabled = false
@@ -19,6 +22,7 @@ final class HealthExportCoordinator: ObservableObject {
     let supportedTypeCount = HealthDataCatalog.sampleTypes.count
 
     private let engine: HealthExportEngine
+    private let directSync = DirectHealthSyncClient()
     private var observerQueries: [String: HKObserverQuery] = [:]
     private var foregroundExportRunning = false
     private var agentExportRunning = false
@@ -31,6 +35,7 @@ final class HealthExportCoordinator: ObservableObject {
     private let lastFullSyncKey = "health-json.last-full-sync"
     private let automaticSyncKey = "health-json.automatic-sync-enabled"
     private let automaticChangesPendingKey = "health-json.automatic-changes-pending"
+    private let lastDirectSyncKey = "health-json.direct.last-delivery"
     private let minimumAutomaticInterval: TimeInterval = 5 * 60
     private let fullReconciliationInterval: TimeInterval = 24 * 60 * 60
     private var lastFullSyncDate: Date?
@@ -47,6 +52,7 @@ final class HealthExportCoordinator: ObservableObject {
         readableTypeIdentifiers = Set(UserDefaults.standard.stringArray(forKey: readableTypesKey) ?? [])
         lastSyncDate = UserDefaults.standard.object(forKey: lastSyncKey) as? Date
         lastBackgroundSyncDate = UserDefaults.standard.object(forKey: lastBackgroundSyncKey) as? Date
+        lastDirectSyncDate = UserDefaults.standard.object(forKey: lastDirectSyncKey) as? Date
         lastFullSyncDate = UserDefaults.standard.object(forKey: lastFullSyncKey) as? Date
 
         Task {
@@ -84,7 +90,10 @@ final class HealthExportCoordinator: ObservableObject {
         }
 
         if hasRequestedAuthorization, automaticSyncEnabled {
-            Task { await enableBackgroundDelivery() }
+            Task {
+                await enableBackgroundDelivery()
+                await retryPendingDirectUploads()
+            }
         }
     }
 
@@ -136,6 +145,7 @@ final class HealthExportCoordinator: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: automaticSyncKey)
         if enabled {
             await enableBackgroundDelivery()
+            await retryPendingDirectUploads(force: true)
             markAutomaticChangesPending()
             _ = await performAutomaticRefreshIfDue(force: true)
         } else {
@@ -223,6 +233,7 @@ final class HealthExportCoordinator: ObservableObject {
 
     func performScheduledRefresh() async -> Bool {
         guard automaticSyncEnabled else { return false }
+        await retryPendingDirectUploads()
         return await performAutomaticRefreshIfDue()
     }
 
@@ -278,13 +289,14 @@ final class HealthExportCoordinator: ObservableObject {
         }
         do {
             let writesFullSnapshot = !isBackground || fullReconciliation
-            let result: (ExportStatistics, ExportLocation, URL)
+            let result: (ExportStatistics, ExportLocation, URL, Data)
             if writesFullSnapshot {
                 result = try await engine.exportAgentContext()
             } else {
                 result = try await engine.exportAgentUpdate()
             }
             exportLocation = result.1
+            applyDirectSyncReport(await directSync.enqueueAndFlush(result.3))
             if writesFullSnapshot {
                 agentFileURL = result.2
                 lastFullSyncDate = Date()
@@ -319,6 +331,16 @@ final class HealthExportCoordinator: ObservableObject {
             }
         }
         backgroundDeliveryEnabled = enabled > 0
+    }
+
+    private func retryPendingDirectUploads(force: Bool = false) async {
+        applyDirectSyncReport(await directSync.flush(force: force))
+    }
+
+    private func applyDirectSyncReport(_ report: DirectHealthSyncReport) {
+        lastDirectSyncDate = report.deliveredAt
+        directSyncPendingCount = report.pendingCount
+        directSyncMessage = report.message
     }
 
     private func readableName(_ identifier: String) -> String {

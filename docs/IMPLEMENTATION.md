@@ -19,7 +19,7 @@ The catalog is generated from public HealthKit types in the iOS 26 SDK:
 - workouts and workout routes
 - audiograms, ECGs, heartbeat series, state of mind, medication dose events
 - user-annotated medications and their clinical coding snapshot
-- activity ring summaries, CDA documents, and vision prescriptions
+- activity ring summaries and vision prescriptions
 - six characteristic values (date of birth, biological sex, blood type, skin type, wheelchair use, activity move mode)
 
 Generic samples, quantities, categories, correlations, workouts, audiograms, scored assessments, medication dose events, and state-of-mind values have subtype-aware JSON encoding. ECG voltage measurements, workout route locations, and heartbeat series are fetched through Apple's async sequence query descriptors. Specialized series are paged one parent sample per JSON file to bound peak memory usage. Clinical FHIR records are excluded from the default product because they require separate hospital/provider accounts and are not part of the user's Apple Watch/iPhone history.

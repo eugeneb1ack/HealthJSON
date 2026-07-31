@@ -13,18 +13,18 @@ actor AgentHealthExporter {
         self.cloudStore = cloudStore
     }
 
-    func export() async throws -> (ExportStatistics, ExportLocation, URL) {
+    func export() async throws -> (ExportStatistics, ExportLocation, URL, Data) {
         try await export(days: historyDays, isDelta: false)
     }
 
-    func exportRecentUpdate() async throws -> (ExportStatistics, ExportLocation, URL) {
+    func exportRecentUpdate() async throws -> (ExportStatistics, ExportLocation, URL, Data) {
         try await export(days: recentUpdateDays, isDelta: true)
     }
 
     private func export(
         days: Int,
         isDelta: Bool
-    ) async throws -> (ExportStatistics, ExportLocation, URL) {
+    ) async throws -> (ExportStatistics, ExportLocation, URL, Data) {
         print("HealthJSON agent \(isDelta ? "delta" : "full") export started")
         let generatedAt = Date()
         let today = calendar.startOfDay(for: generatedAt)
@@ -118,13 +118,13 @@ actor AgentHealthExporter {
             "sleepIntervals": sleepIntervals
         ]
 
-        let writeResult: (ExportLocation, URL)
+        let writeResult: (ExportLocation, URL, Data)
         if isDelta {
             writeResult = try await cloudStore.writeAgentUpdate(payload)
         } else {
             writeResult = try await cloudStore.writeAgentSnapshot(payload)
         }
-        let (location, fileURL) = writeResult
+        let (location, fileURL, data) = writeResult
         print("HealthJSON agent export wrote \(fileURL.path)")
         return (
             ExportStatistics(
@@ -133,7 +133,8 @@ actor AgentHealthExporter {
                     + activity.count + sleepIntervals.count
             ),
             location,
-            fileURL
+            fileURL,
+            data
         )
     }
 

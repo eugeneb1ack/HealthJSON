@@ -1,20 +1,21 @@
 # Health JSON
 
-Health JSON is a private iPhone exporter for Apple Health data. Its primary output is one compact file for an AI health coach: **iCloud Drive → Health JSON → Agent → health-context.json**. It includes only populated, approved health metrics and replaces itself atomically after every sync.
+Health JSON is a private iPhone exporter for Apple Health data. It sends compact updates directly to the owner's trainer over private Tailscale HTTPS and keeps **iCloud Drive → Health JSON → Agent** as a durable fallback.
 
 The AI file covers the most recent 365 days. Cumulative metrics such as steps, distance, and energy are summed by day. Discrete measurements such as heart rate, oxygen saturation, HRV, respiratory rate, temperature, blood pressure, glucose, and body measurements include daily average, minimum, maximum, and latest values. Sleep is split into stages and duration, with activity rings, workouts, symptoms, ECG summaries, mental-state entries, and assessments where available. UUIDs, device details, source applications, and arbitrary metadata are omitted to save model context.
 
-The canonical `health-context.json` is a complete snapshot. Automatic synchronization coalesces HealthKit events for up to five minutes and writes small immutable three-day window updates under `Agent/Inbox`, avoiding concurrent replacement and iCloud conflict copies. A daily full snapshot reconciles older corrections. Synchronization can be paused or resumed in the app; manual **Update single JSON** always writes a complete snapshot immediately.
+The canonical `health-context.json` is a complete snapshot. Automatic synchronization coalesces HealthKit events for up to five minutes, posts the resulting JSON directly to bot-trainer, and also writes small immutable three-day updates under `Agent/Inbox`. Failed direct deliveries stay in the app's protected retry queue with exponential backoff. A daily full snapshot reconciles older corrections. Manual **Update single JSON** creates and sends a complete snapshot immediately.
 
 ## Architecture
 
 1. The app requests read-only HealthKit access.
 2. HealthKit statistics merge duplicate sources and generate compact daily health aggregates.
 3. `HKObserverQuery` marks supported HealthKit changes as pending. Immediate background delivery writes a coalesced recent-window update when iOS grants execution time; `BGAppRefreshTask` retries pending work and performs periodic reconciliation.
-4. The complete agent context is written atomically to one stable file, so readers never see a partial JSON document.
-5. An optional technical raw archive remains available under **Health JSON → Exports** for detailed debugging, but an AI agent should read only the file under **Agent**.
+4. The update is delivered to the localhost-only bot-trainer ingest service through Tailscale Serve HTTPS. Tailscale identity is checked before import; the raw request body is not retained.
+5. The same data is written atomically to iCloud, so direct-network outages do not lose the export.
+6. An optional technical raw archive remains available under **Health JSON → Exports** for detailed debugging, but an AI agent should use bot-trainer's normalized database.
 
-There is intentionally no fixed timer. Five minutes is a coalescing interval, not a guaranteed deadline: iOS decides when background work runs and may throttle HealthKit delivery. Pending state survives an app restart, immutable update files are retained for seven days, and manual sync is always available.
+There is intentionally no fixed timer. Five minutes is a coalescing interval, not a guaranteed deadline: iOS decides when background work runs and may throttle HealthKit delivery. Once an export starts, direct delivery normally completes in seconds. Pending state and the direct retry queue survive an app restart; manual sync is always available.
 
 ## Run on an iPhone
 
@@ -23,7 +24,7 @@ There is intentionally no fixed timer. Five minutes is a coalescing interval, no
 3. Change `PRODUCT_BUNDLE_IDENTIFIER` if Xcode reports that `com.johndoe.HealthJSON` is unavailable.
 4. In **Signing & Capabilities**, confirm **HealthKit** and **Background Delivery**. No iCloud capability is required, so a free Personal Team can sign the app.
 5. Build to a physical iPhone. HealthKit background delivery cannot be tested in Simulator.
-6. Tap **Choose iCloud Drive folder**, select or create a private folder, grant Health access, then tap **Update single JSON for AI**.
+6. Keep Tailscale connected on the iPhone, choose a private iCloud Drive folder, grant Health access, then tap **Update single JSON for AI**. The status card shows the last delivery to the trainer or the number of queued retries.
 
 The first export can take a long time for a large history. Keep the app open until it completes. Later exports are incremental.
 
@@ -111,7 +112,7 @@ Quantity samples contain a numeric `value` and `unit` using HealthKit's preferre
 
 - HealthKit never tells an app which read permissions were denied. Missing data does not prove that no data exists.
 - A user can grant only a recent window of history.
-- The export is unencrypted JSON inside the folder selected by the user. Protect the Apple ID and Mac account accordingly.
+- The iCloud fallback is unencrypted JSON inside the folder selected by the user. Direct transport uses tailnet-only HTTPS and accepts only the configured Tailscale identity.
 - ECG voltage points, workout route coordinates, and heartbeat beat-by-beat series are exported using their dedicated streaming HealthKit queries. A series-level error is recorded on the parent sample without losing the rest of the export.
 - Clinical Health Records are deliberately not requested. They are FHIR records from hospital or laboratory patient portals and trigger a separate provider-account flow; they are not required for personal iPhone and Apple Watch health data.
 

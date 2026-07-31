@@ -45,7 +45,7 @@ struct ContentView: View {
             Text("Данные здоровья — в одном JSON")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
-            Text("Экспорт только для чтения в ваш iCloud Drive. Без аккаунта и внешнего сервера.")
+            Text("Резервная копия в iCloud и быстрая доставка вашему тренеру через Tailscale.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -77,6 +77,15 @@ struct ContentView: View {
                 value: coordinator.automaticSyncEnabled
                     ? (coordinator.backgroundDeliveryEnabled ? "Включена" : "Ожидание")
                     : "Приостановлена"
+            )
+            Divider().padding(.leading, 44)
+            statusRow(
+                icon: coordinator.directSyncPendingCount > 0 ? "clock.arrow.circlepath" : "paperplane.circle.fill",
+                color: coordinator.directSyncPendingCount > 0
+                    ? .orange
+                    : (coordinator.lastDirectSyncDate == nil ? .secondary : .green),
+                title: "Доставка тренеру",
+                value: directSyncText
             )
             Divider().padding(.leading, 44)
             statusRow(
@@ -118,8 +127,8 @@ struct ContentView: View {
                 Text(
                     coordinator.automaticSyncEnabled
                         ? (coordinator.automaticChangesPending
-                            ? "Изменения накоплены и войдут в ближайшее событийное обновление."
-                            : "Автоматически при изменениях HealthKit, с объединением до 5 минут.")
+                            ? "Изменения накоплены и будут отправлены тренеру в ближайшем обновлении."
+                            : "При изменениях HealthKit: напрямую на Mac, с объединением до 5 минут. iCloud остаётся резервом.")
                         : "Автоматическое обновление приостановлено."
                 )
                 .font(.caption)
@@ -224,10 +233,10 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Важно", systemImage: "lock.fill")
                 .font(.headline)
-            Text("Данные о здоровье чувствительны. Файлы остаются в вашем iCloud, но приложение не шифрует их отдельно. Защитите Apple ID и учётную запись Mac.")
+            Text("Данные о здоровье чувствительны. Прямая доставка доступна только внутри вашего зашифрованного Tailscale-соединения; iCloud остаётся резервной копией.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Автосинхронизацию можно приостановить. Изменения HealthKit объединяются до 5 минут и отправляются маленькими обновлениями; ручная кнопка создаёт полный снимок сразу. Точное время фонового запуска определяет iOS.")
+            Text("Автосинхронизацию можно приостановить. Неотправленные обновления остаются в защищённой очереди приложения и повторяются с паузой. Ручная кнопка создаёт и отправляет полный снимок сразу. Точное время фонового запуска определяет iOS.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -243,6 +252,7 @@ struct ContentView: View {
             Spacer()
             Text(value)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
         }
         .font(.subheadline)
         .padding(14)
@@ -262,6 +272,16 @@ struct ContentView: View {
 
     private var backgroundSyncText: String {
         guard let date = coordinator.lastBackgroundSyncDate else { return "Ожидается iOS" }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var directSyncText: String {
+        if coordinator.directSyncPendingCount > 0 {
+            return coordinator.directSyncMessage ?? "В очереди: \(coordinator.directSyncPendingCount)"
+        }
+        guard let date = coordinator.lastDirectSyncDate else {
+            return coordinator.directSyncMessage ?? "Ожидается отправка"
+        }
         return date.formatted(date: .omitted, time: .shortened)
     }
 
