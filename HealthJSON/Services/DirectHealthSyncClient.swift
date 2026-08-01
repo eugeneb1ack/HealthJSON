@@ -51,7 +51,7 @@ actor DirectHealthSyncClient {
         self.session = URLSession(configuration: configuration)
     }
 
-    func enqueueAndFlush(_ payload: Data) async -> DirectHealthSyncReport {
+    func enqueue(_ payload: Data) -> DirectHealthSyncReport {
         guard endpoint != nil else {
             return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
         }
@@ -68,7 +68,7 @@ actor DirectHealthSyncClient {
                 options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
             )
             try pruneQueue(in: directory)
-            return await flush(force: true)
+            return report(message: "Ожидается отправка", connectionState: .idle)
         } catch {
             return report(message: "Не удалось поставить обновление в очередь", connectionState: .serverUnavailable)
         }
@@ -96,7 +96,7 @@ actor DirectHealthSyncClient {
             case 500..<600:
                 return report(message: "Mac временно недоступен", connectionState: .serverUnavailable)
             default:
-                return report(message: "Endpoint тренера недоступен", connectionState: .serverUnavailable)
+                return report(message: "Сервис синхронизации недоступен", connectionState: .serverUnavailable)
             }
         } catch {
             return report(message: "Нет связи с Mac", connectionState: .unreachable)

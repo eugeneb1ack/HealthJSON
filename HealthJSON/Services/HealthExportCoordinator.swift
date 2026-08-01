@@ -28,6 +28,10 @@ final class HealthExportCoordinator: ObservableObject {
     private var observerQueries: [String: HKObserverQuery] = [:]
     private var foregroundExportRunning = false
     private var agentExportRunning = false
+    private var agentExportWaiters: [CheckedContinuation<Void, Never>] = []
+    private var automaticRefreshTask: Task<Void, Never>?
+    private var automaticRefreshDeadline: Date?
+    private var automaticRefreshToken = 0
     private var automaticChangeGeneration = 0
     private var readableTypeIdentifiers: Set<String>
 
@@ -85,8 +89,16 @@ final class HealthExportCoordinator: ObservableObject {
 
                 Task { @MainActor in
                     self.markAutomaticChangesPending()
-                    if self.automaticSyncEnabled {
-                        _ = await self.performAutomaticRefreshIfDue()
+                    guard self.automaticSyncEnabled else {
+                        completion()
+                        return
+                    }
+                    let delay = self.automaticRefreshDelay()
+                    if delay == 0, !self.agentExportRunning {
+                        self.cancelScheduledAutomaticRefresh()
+                        _ = await self.performAutomaticRefreshIfDue(force: true)
+                    } else {
+                        self.scheduleAutomaticRefresh(after: delay == 0 ? 5 : delay)
                     }
                     completion()
                 }
@@ -98,6 +110,9 @@ final class HealthExportCoordinator: ObservableObject {
         if hasRequestedAuthorization, automaticSyncEnabled {
             Task {
                 await enableBackgroundDelivery()
+                if automaticChangesPending {
+                    scheduleAutomaticRefresh()
+                }
                 if directSyncEnabled {
                     await retryPendingDirectUploads()
                 }
@@ -136,10 +151,13 @@ final class HealthExportCoordinator: ObservableObject {
     }
 
     func syncChanges() async {
-        guard !foregroundExportRunning, !agentExportRunning else { return }
+        guard !foregroundExportRunning else { return }
         if !hasRequestedAuthorization {
             await requestAuthorization()
             guard hasRequestedAuthorization else { return }
+        }
+        if agentExportRunning {
+            phase = .exporting(current: 1, total: 1, type: "ожидание текущей синхронизации")
         }
         let generation = automaticChangeGeneration
         let success = await runAgentExport(isBackground: false)
@@ -153,10 +171,11 @@ final class HealthExportCoordinator: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: automaticSyncKey)
         if enabled {
             await enableBackgroundDelivery()
-            await retryPendingDirectUploads(force: true)
             markAutomaticChangesPending()
+            cancelScheduledAutomaticRefresh()
             _ = await performAutomaticRefreshIfDue(force: true)
         } else {
+            cancelScheduledAutomaticRefresh()
             do {
                 try await healthStore.disableAllBackgroundDelivery()
             } catch {
@@ -187,6 +206,17 @@ final class HealthExportCoordinator: ObservableObject {
         directSyncConnectionState = .checking
         directSyncMessage = "Проверка соединения…"
         applyDirectSyncReport(await directSync.checkConnection())
+    }
+
+    func handleAppDidBecomeActive() {
+        if automaticSyncEnabled, automaticChangesPending {
+            scheduleAutomaticRefresh()
+        }
+        if directSyncEnabled {
+            Task { [weak self] in
+                await self?.retryPendingDirectUploads()
+            }
+        }
     }
 
     func selectExportFolder(_ url: URL) async {
@@ -264,17 +294,24 @@ final class HealthExportCoordinator: ObservableObject {
 
     func performScheduledRefresh() async -> Bool {
         guard automaticSyncEnabled else { return false }
+        let success = await performAutomaticRefreshIfDue()
         if directSyncEnabled {
-            await retryPendingDirectUploads()
+            Task { [weak self] in
+                await self?.retryPendingDirectUploads()
+            }
         }
-        return await performAutomaticRefreshIfDue()
+        return success
     }
 
     private func performAutomaticRefreshIfDue(force: Bool = false) async -> Bool {
+        guard automaticSyncEnabled else { return false }
         guard automaticChangesPending else { return true }
-        if !force,
-           let lastBackgroundSyncDate,
-           Date().timeIntervalSince(lastBackgroundSyncDate) < minimumAutomaticInterval {
+        if !force, automaticRefreshDelay() > 0 {
+            scheduleAutomaticRefresh()
+            return true
+        }
+        if agentExportRunning {
+            scheduleAutomaticRefresh(after: 5)
             return true
         }
 
@@ -287,6 +324,8 @@ final class HealthExportCoordinator: ObservableObject {
         )
         if success {
             clearAutomaticChangesPending(ifGenerationIs: generation)
+        } else if automaticChangesPending {
+            scheduleAutomaticRefresh(after: 30)
         }
         return success
     }
@@ -301,6 +340,7 @@ final class HealthExportCoordinator: ObservableObject {
         guard generation == automaticChangeGeneration else { return }
         automaticChangesPending = false
         UserDefaults.standard.set(false, forKey: automaticChangesPendingKey)
+        cancelScheduledAutomaticRefresh()
     }
 
     private func updateAgentFileURL() {
@@ -313,9 +353,9 @@ final class HealthExportCoordinator: ObservableObject {
         isBackground: Bool,
         fullReconciliation: Bool = false
     ) async -> Bool {
-        guard hasRequestedAuthorization, !agentExportRunning else { return false }
-        agentExportRunning = true
-        defer { agentExportRunning = false }
+        guard hasRequestedAuthorization else { return false }
+        await acquireAgentExportAccess()
+        defer { releaseAgentExportAccess() }
 
         if !isBackground {
             phase = .exporting(current: 1, total: 1, type: "единый файл")
@@ -330,7 +370,10 @@ final class HealthExportCoordinator: ObservableObject {
             }
             exportLocation = result.1
             if directSyncEnabled {
-                applyDirectSyncReport(await directSync.enqueueAndFlush(result.3))
+                applyDirectSyncReport(await directSync.enqueue(result.3))
+                Task { [weak self] in
+                    await self?.retryPendingDirectUploads(force: true)
+                }
             }
             if writesFullSnapshot {
                 agentFileURL = result.2
@@ -378,6 +421,66 @@ final class HealthExportCoordinator: ObservableObject {
         directSyncPendingCount = report.pendingCount
         directSyncMessage = report.message
         directSyncConnectionState = report.connectionState
+    }
+
+    private func automaticRefreshDelay(now: Date = Date()) -> TimeInterval {
+        guard let lastBackgroundSyncDate else { return 0 }
+        return max(0, minimumAutomaticInterval - now.timeIntervalSince(lastBackgroundSyncDate))
+    }
+
+    private func scheduleAutomaticRefresh(after requestedDelay: TimeInterval? = nil) {
+        guard automaticSyncEnabled, automaticChangesPending else { return }
+        let delay = max(0, requestedDelay ?? automaticRefreshDelay())
+        let deadline = Date().addingTimeInterval(delay)
+        if let automaticRefreshDeadline, automaticRefreshDeadline <= deadline {
+            return
+        }
+        automaticRefreshTask?.cancel()
+        automaticRefreshToken += 1
+        let token = automaticRefreshToken
+        automaticRefreshDeadline = deadline
+        print("HealthJSON automatic refresh scheduled in \(Int(ceil(delay)))s")
+        automaticRefreshTask = Task { [weak self] in
+            if delay > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  token == self.automaticRefreshToken
+            else { return }
+            self.automaticRefreshDeadline = nil
+            print("HealthJSON automatic refresh starting")
+            _ = await self.performAutomaticRefreshIfDue(force: true)
+        }
+    }
+
+    private func cancelScheduledAutomaticRefresh() {
+        automaticRefreshTask?.cancel()
+        automaticRefreshTask = nil
+        automaticRefreshDeadline = nil
+        automaticRefreshToken += 1
+    }
+
+    private func acquireAgentExportAccess() async {
+        if !agentExportRunning {
+            agentExportRunning = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            agentExportWaiters.append(continuation)
+        }
+    }
+
+    private func releaseAgentExportAccess() {
+        guard !agentExportWaiters.isEmpty else {
+            agentExportRunning = false
+            return
+        }
+        agentExportWaiters.removeFirst().resume()
     }
 
     private func readableName(_ identifier: String) -> String {

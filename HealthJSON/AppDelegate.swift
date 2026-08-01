@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         Self.scheduleBackgroundRefresh()
     }
 
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        HealthExportCoordinator.shared.handleAppDidBecomeActive()
+    }
+
     static func scheduleBackgroundRefresh() {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: refreshTaskIdentifier)
         let request = BGAppRefreshTaskRequest(identifier: refreshTaskIdentifier)

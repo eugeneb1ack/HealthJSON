@@ -48,7 +48,7 @@ struct ContentView: View {
             Text("Данные здоровья — в одном JSON")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
-            Text("Резервная копия в iCloud и быстрая доставка вашему тренеру через Tailscale.")
+            Text("Резервная копия в iCloud и быстрая синхронизация через Tailscale.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -85,7 +85,7 @@ struct ContentView: View {
             statusRow(
                 icon: directSyncIcon,
                 color: directSyncColor,
-                title: "Tailscale → тренер",
+                title: "Tailscale",
                 value: directSyncText
             )
             Divider().padding(.leading, 44)
@@ -128,7 +128,7 @@ struct ContentView: View {
                 Text(
                     coordinator.automaticSyncEnabled
                         ? (coordinator.automaticChangesPending
-                            ? "Изменения накоплены и будут отправлены тренеру в ближайшем обновлении."
+                            ? "Изменения накоплены и будут синхронизированы в ближайшем обновлении."
                             : "При изменениях HealthKit: напрямую на Mac, с объединением до 5 минут. iCloud остаётся резервом.")
                         : "Автоматическое обновление приостановлено."
                 )
@@ -136,7 +136,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
                 Toggle(
-                    "Отправлять через Tailscale",
+                    "Tailscale",
                     isOn: Binding(
                         get: { coordinator.directSyncEnabled },
                         set: { enabled in
@@ -340,7 +340,7 @@ struct ContentView: View {
         }
         switch coordinator.directSyncConnectionState {
         case .connected:
-            return "Защищённый канал до бота-тренера доступен."
+            return "Защищённое соединение доступно."
         case .checking:
             return "Проверяю защищённый канал до Mac."
         case .unauthorized:
@@ -348,7 +348,7 @@ struct ContentView: View {
         case .unreachable:
             return "Включите Tailscale на iPhone и Mac; данные не потеряются."
         case .serverUnavailable:
-            return "Tailscale доступен, но приёмник тренера не отвечает."
+            return "Tailscale доступен, но сервис синхронизации не отвечает."
         case .notConfigured:
             return "Адрес приёмника не настроен в этой сборке."
         case .idle:
