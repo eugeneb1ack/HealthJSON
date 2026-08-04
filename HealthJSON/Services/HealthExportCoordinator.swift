@@ -230,10 +230,20 @@ final class HealthExportCoordinator: ObservableObject {
     }
 
     func prepareAgentFileForSharing() async -> URL? {
+        if !hasRequestedAuthorization {
+            await requestAuthorization()
+            guard hasRequestedAuthorization else { return nil }
+        }
+        if agentExportRunning {
+            phase = .exporting(current: 1, total: 1, type: "ожидание текущей синхронизации")
+        }
+        let generation = automaticChangeGeneration
+        guard await runAgentExport(isBackground: false) else { return nil }
+        clearAutomaticChangesPending(ifGenerationIs: generation)
         do {
             return try await engine.makeAgentSnapshotShareCopy()
         } catch {
-            phase = .failed("Не удалось подготовить единый файл: сначала обновите JSON.")
+            phase = .failed("Не удалось подготовить свежий единый файл.")
             return nil
         }
     }
