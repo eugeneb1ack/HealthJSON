@@ -2,6 +2,10 @@
   <img src="docs/assets/health-json-cover.png" alt="Health JSON: приватный экспорт Apple Health с iPhone в JSON, CSV и защищённый API" width="100%">
 </p>
 
+<p align="center">
+  <strong>Русский</strong> · <a href="README_EN.md">English</a>
+</p>
+
 # Health JSON
 
 **Приватный экспорт данных Apple Health с iPhone в JSON, CSV и локальный HTTPS API.**
