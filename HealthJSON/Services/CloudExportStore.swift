@@ -2,11 +2,14 @@ import Foundation
 
 enum CloudExportStoreError: LocalizedError {
     case wouldReplacePopulatedSnapshotWithEmpty
+    case agentSnapshotMissing
 
     var errorDescription: String? {
         switch self {
         case .wouldReplacePopulatedSnapshotWithEmpty:
             "HealthKit временно не вернул данные; предыдущий снимок сохранён."
+        case .agentSnapshotMissing:
+            "Сначала создайте снимок данных, чтобы открыть его в приложении."
         }
     }
 }
@@ -154,6 +157,37 @@ final class CloudExportStore {
         let destination = inbox.appendingPathComponent(filename)
         try coordinatedWrite(data, to: destination)
         return (location, destination, data)
+    }
+
+    /// Reads the same canonical snapshot that is exported to iCloud Drive and
+    /// shared with other apps. File coordination keeps a viewer refresh from
+    /// observing an in-progress iCloud replacement.
+    func readAgentSnapshot() async throws -> Data {
+        let location = try await resolveLocation()
+        let selectedFolder = folderAccess.resolve()
+        let startedAccess = selectedFolder?.startAccessingSecurityScopedResource() ?? false
+        defer {
+            if startedAccess { selectedFolder?.stopAccessingSecurityScopedResource() }
+        }
+
+        let source = location.url
+            .deletingLastPathComponent()
+            .appendingPathComponent("Agent/health-context.json")
+        guard fileManager.fileExists(atPath: source.path) else {
+            throw CloudExportStoreError.agentSnapshotMissing
+        }
+
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var readResult: Result<Data, Error>?
+        coordinator.coordinate(readingItemAt: source, options: [], error: &coordinationError) { url in
+            readResult = Result {
+                try Data(contentsOf: url, options: .mappedIfSafe)
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let readResult else { throw CloudExportStoreError.agentSnapshotMissing }
+        return try readResult.get()
     }
 
     func makeAgentSnapshotShareCopy(format: ShareFormat) async throws -> URL {

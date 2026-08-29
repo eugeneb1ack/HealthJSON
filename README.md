@@ -6,6 +6,8 @@ The AI file covers the most recent 365 days. Cumulative metrics such as steps, d
 
 The canonical `health-context.json` is a complete snapshot. Automatic synchronization coalesces HealthKit events for up to five minutes and also writes small immutable three-day updates under `Agent/Inbox`. If the user explicitly enables direct Tailscale delivery, the resulting JSON is posted to the private receiver; failed deliveries stay in the app's protected retry queue with exponential backoff. A daily full snapshot reconciles older corrections. Manual **Update data** creates a complete snapshot immediately and sends it directly only when that option is enabled. **Share** also refreshes the complete snapshot before opening the share sheet, so it never offers an older file than the latest direct update. The UI lets the user choose JSON or CSV for sharing; automatic delivery and the API always remain JSON.
 
+The **Health data** screen is a local, read-only viewer for that same canonical JSON snapshot. It presents all available data by day, week, month, or year with detail lists for metrics, events, rings, sleep, workouts, and special records; it does not issue a second HealthKit query when opened. Its in-screen **Update from Health** action creates a new full JSON and CSV snapshot, serializes with an in-flight export, and reloads the viewer only after the atomic replacement succeeds.
+
 ## Architecture
 
 1. The app requests read-only HealthKit access.

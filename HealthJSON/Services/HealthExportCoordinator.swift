@@ -156,11 +156,12 @@ final class HealthExportCoordinator: ObservableObject {
         await runForegroundExport(fromBeginning: true)
     }
 
-    func syncChanges() async {
-        guard !foregroundExportRunning else { return }
+    @discardableResult
+    func syncChanges() async -> Bool {
+        guard !foregroundExportRunning else { return false }
         if !hasRequestedAuthorization {
             await requestAuthorization()
-            guard hasRequestedAuthorization else { return }
+            guard hasRequestedAuthorization else { return false }
         }
         if agentExportRunning {
             phase = .exporting(current: 1, total: 1, type: "ожидание текущей синхронизации")
@@ -170,6 +171,7 @@ final class HealthExportCoordinator: ObservableObject {
         if success {
             clearAutomaticChangesPending(ifGenerationIs: generation)
         }
+        return success
     }
 
     func setAutomaticSyncEnabled(_ enabled: Bool) async {
@@ -283,6 +285,10 @@ final class HealthExportCoordinator: ObservableObject {
             phase = .failed(L10n.text("coordinator.error.share_prepare"))
             return nil
         }
+    }
+
+    func loadAgentSnapshotForViewer() async throws -> HealthDataSnapshot {
+        try await engine.loadAgentSnapshot()
     }
 
     private func runForegroundExport(fromBeginning: Bool) async {

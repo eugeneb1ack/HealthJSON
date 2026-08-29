@@ -135,6 +135,11 @@ actor HealthExportEngine {
         return try await cloudStore.makeAgentSnapshotShareCopy(format: format)
     }
 
+    func loadAgentSnapshot() async throws -> HealthDataSnapshot {
+        let data = try await cloudStore.readAgentSnapshot()
+        return try HealthDataSnapshot.decode(data: data)
+    }
+
     private func preferredUnits() async -> [HKQuantityType: HKUnit] {
         if let cachedPreferredUnits { return cachedPreferredUnits }
         let units = (try? await healthStore.preferredUnits(for: Set(HealthDataCatalog.quantityTypes))) ?? [:]

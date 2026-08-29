@@ -26,6 +26,8 @@
 		100000000000000000000011 /* TailscaleSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* TailscaleSettingsView.swift */; };
 		100000000000000000000012 /* AppLocalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* AppLocalizer.swift */; };
 		100000000000000000000013 /* HealthImportEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* HealthImportEndpoint.swift */; };
+		100000000000000000000014 /* HealthDataSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* HealthDataSnapshot.swift */; };
+		100000000000000000000015 /* HealthDataViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* HealthDataViewerView.swift */; };
 		A10000000000000000000001 /* AppIcon60x60@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppIcon60x60@2x.png */; };
 		A10000000000000000000002 /* AppIcon60x60@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AppIcon60x60@3x.png */; };
 		A10000000000000000000003 /* AppIcon76x76@1x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* AppIcon76x76@1x~ipad.png */; };
@@ -58,6 +60,8 @@
 		200000000000000000000013 /* TailscaleSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleSettingsView.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* AppLocalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization/AppLocalizer.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* HealthImportEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthImportEndpoint.swift; sourceTree = "<group>"; };
+		200000000000000000000016 /* HealthDataSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDataSnapshot.swift; sourceTree = "<group>"; };
+		200000000000000000000017 /* HealthDataViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDataViewerView.swift; sourceTree = "<group>"; };
 		B200000000000000000000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		B200000000000000000000002 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/Localizable.strings; sourceTree = "<group>"; };
 		B200000000000000000000003 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -114,6 +118,7 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000003 /* ExportModels.swift */,
+				200000000000000000000016 /* HealthDataSnapshot.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -143,6 +148,7 @@
 					20000000000000000000000A /* ContentView.swift */,
 					20000000000000000000000E /* FolderPicker.swift */,
 					200000000000000000000013 /* TailscaleSettingsView.swift */,
+					200000000000000000000017 /* HealthDataViewerView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -271,6 +277,8 @@
 				100000000000000000000011 /* TailscaleSettingsView.swift in Sources */,
 				100000000000000000000012 /* AppLocalizer.swift in Sources */,
 				100000000000000000000013 /* HealthImportEndpoint.swift in Sources */,
+				100000000000000000000014 /* HealthDataSnapshot.swift in Sources */,
+				100000000000000000000015 /* HealthDataViewerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

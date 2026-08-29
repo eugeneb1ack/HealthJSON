@@ -14,6 +14,7 @@ struct ContentView: View {
                     statusCard
                     syncCard
                     exportCard
+                    dataViewerCard
                     connectionCard
                     privacyCard
                 }
@@ -153,7 +154,7 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 Button {
-                    Task { await coordinator.syncChanges() }
+                    Task { _ = await coordinator.syncChanges() }
                 } label: {
                     Label(L10n.text("home.sync.update"), systemImage: "heart.text.clipboard")
                         .actionLabelStyle()
@@ -247,6 +248,41 @@ struct ContentView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                     Text(L10n.text("home.connection.subtitle"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cardStyle()
+    }
+
+    private var dataViewerCard: some View {
+        NavigationLink {
+            HealthDataViewerView()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "list.bullet.rectangle.portrait.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.teal)
+                    .frame(width: 42, height: 42)
+                    .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.text("home.viewer.title"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text(L10n.text("home.viewer.subtitle"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
