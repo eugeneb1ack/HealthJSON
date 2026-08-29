@@ -1,6 +1,6 @@
 "home.title" = "Здоровье";
-"home.hero.title" = "Данные здоровья — в одном месте";
-"home.hero.subtitle" = "iCloud Drive, JSON/CSV и приватная синхронизация по желанию.";
+"home.hero.title" = "Приватный экспорт из Здоровья";
+"home.hero.subtitle" = "JSON, CSV, iCloud Drive и необязательный приватный API.";
 "home.status.health_access" = "Доступ к Здоровью";
 "home.status.requested" = "Запрошен";
 "home.status.not_requested" = "Не запрошен";
@@ -70,7 +70,7 @@
 "connection.status.waiting" = "Ожидается отправка";
 
 "connection.endpoint.label" = "Адрес вашего приёмника Tailscale";
-"connection.endpoint.placeholder" = "https://mac.your-tailnet.ts.net";
+"connection.endpoint.placeholder" = "https://receiver.your-tailnet.ts.net";
 "connection.endpoint.save" = "Сохранить адрес";
 "connection.endpoint.clear" = "Удалить адрес";
 "connection.endpoint.saved" = "Адрес сохранён.";
@@ -84,15 +84,15 @@
 "direct.message.payload_too_large" = "Обновление слишком большое для прямой доставки";
 "direct.message.waiting" = "Ожидается отправка";
 "direct.message.queue_failed" = "Не удалось поставить обновление в очередь";
-"direct.message.offline" = "Нет связи с Mac";
+"direct.message.offline" = "Получатель недоступен";
 "direct.message.access_denied" = "Tailscale не подтвердил доступ";
-"direct.message.server_unavailable" = "Mac временно недоступен";
+"direct.message.server_unavailable" = "Получатель временно недоступен";
 "direct.message.service_unavailable" = "Сервис синхронизации недоступен";
 "direct.message.retry_waiting" = "Ожидается повторная отправка";
 "direct.message.queue_unavailable" = "Очередь отправки недоступна";
-"direct.message.invalid_update" = "Mac отклонил некорректное обновление";
-"direct.message.rejected" = "Mac отклонил обновление";
-"direct.message.offline_queued" = "Нет связи с Mac — обновление сохранено";
+"direct.message.invalid_update" = "Получатель отклонил некорректное обновление";
+"direct.message.rejected" = "Получатель отклонил обновление";
+"direct.message.offline_queued" = "Получатель недоступен — обновление сохранено";
 
 "coordinator.error.healthkit_unavailable" = "HealthKit недоступен на этом устройстве.";
 "coordinator.error.folder_access" = "Не удалось сохранить доступ к папке: %@";

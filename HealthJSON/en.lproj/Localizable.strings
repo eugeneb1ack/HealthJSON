@@ -1,6 +1,6 @@
 "home.title" = "Health";
-"home.hero.title" = "Your health data, in one place";
-"home.hero.subtitle" = "iCloud Drive, JSON/CSV, and optional private sync.";
+"home.hero.title" = "Private Apple Health export";
+"home.hero.subtitle" = "JSON, CSV, iCloud Drive, and an optional private API.";
 "home.status.health_access" = "Health access";
 "home.status.requested" = "Requested";
 "home.status.not_requested" = "Not requested";
@@ -70,7 +70,7 @@
 "connection.status.waiting" = "Waiting to send";
 
 "connection.endpoint.label" = "Your Tailscale receiver address";
-"connection.endpoint.placeholder" = "https://mac.your-tailnet.ts.net";
+"connection.endpoint.placeholder" = "https://receiver.your-tailnet.ts.net";
 "connection.endpoint.save" = "Save address";
 "connection.endpoint.clear" = "Remove address";
 "connection.endpoint.saved" = "Address saved.";
@@ -84,15 +84,15 @@
 "direct.message.payload_too_large" = "The update is too large for direct delivery";
 "direct.message.waiting" = "Waiting to send";
 "direct.message.queue_failed" = "The update could not be queued";
-"direct.message.offline" = "The Mac is offline";
+"direct.message.offline" = "The receiver is offline";
 "direct.message.access_denied" = "Tailscale did not authorize access";
-"direct.message.server_unavailable" = "The Mac is temporarily unavailable";
+"direct.message.server_unavailable" = "The receiver is temporarily unavailable";
 "direct.message.service_unavailable" = "The sync service is unavailable";
 "direct.message.retry_waiting" = "Waiting to retry delivery";
 "direct.message.queue_unavailable" = "The delivery queue is unavailable";
-"direct.message.invalid_update" = "The Mac rejected an invalid update";
-"direct.message.rejected" = "The Mac rejected the update";
-"direct.message.offline_queued" = "The Mac is offline — the update was saved";
+"direct.message.invalid_update" = "The receiver rejected an invalid update";
+"direct.message.rejected" = "The receiver rejected the update";
+"direct.message.offline_queued" = "The receiver is offline — the update was saved";
 
 "coordinator.error.healthkit_unavailable" = "HealthKit is not available on this device.";
 "coordinator.error.folder_access" = "Could not keep access to the folder: %@";
