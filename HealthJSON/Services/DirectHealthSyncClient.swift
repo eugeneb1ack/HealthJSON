@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct DirectHealthSyncReport: Sendable {
@@ -21,13 +22,14 @@ actor DirectHealthSyncClient {
     private let fileManager: FileManager
     private let defaults: UserDefaults
     private let session: URLSession
-    private let endpoint: URL?
+    private var endpoint: URL?
     private let maximumPayloadBytes = 8 * 1024 * 1024
     private let maximumPendingFiles = 64
 
     private let lastDeliveryKey = "health-json.direct.last-delivery"
     private let failureCountKey = "health-json.direct.failure-count"
     private let nextRetryKey = "health-json.direct.next-retry"
+    private let endpointKey = "health-json.direct.endpoint"
 
     init(
         fileManager: FileManager = .default,
@@ -38,10 +40,10 @@ actor DirectHealthSyncClient {
         self.defaults = defaults
         if let endpoint {
             self.endpoint = endpoint
-        } else if let raw = Bundle.main.object(forInfoDictionaryKey: "HealthUploadURL") as? String {
-            self.endpoint = URL(string: raw)
         } else {
-            self.endpoint = nil
+            self.endpoint = defaults.string(forKey: endpointKey).flatMap {
+                try? HealthImportEndpoint.normalize($0)
+            }
         }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
@@ -51,32 +53,47 @@ actor DirectHealthSyncClient {
         self.session = URLSession(configuration: configuration)
     }
 
+    func configuredEndpoint() -> URL? {
+        endpoint
+    }
+
+    func configureEndpoint(_ endpoint: URL?) {
+        self.endpoint = endpoint
+        if let endpoint {
+            defaults.set(endpoint.absoluteString, forKey: endpointKey)
+        } else {
+            defaults.removeObject(forKey: endpointKey)
+        }
+        clearBackoff()
+    }
+
     func enqueue(_ payload: Data) -> DirectHealthSyncReport {
-        guard endpoint != nil else {
-            return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
+        guard let endpoint else {
+            return report(message: L10n.text("direct.message.not_configured"), connectionState: .notConfigured)
         }
         guard !payload.isEmpty, payload.count <= maximumPayloadBytes else {
-            return report(message: "Обновление слишком большое для прямой доставки", connectionState: .serverUnavailable)
+            return report(message: L10n.text("direct.message.payload_too_large"), connectionState: .serverUnavailable)
         }
         do {
             let directory = try queueDirectory()
+            let endpointPrefix = queuePrefix(for: endpoint)
             let destination = directory.appendingPathComponent(
-                "pending-\(Int64(Date().timeIntervalSince1970 * 1_000))-\(UUID().uuidString.lowercased()).json"
+                "pending-\(endpointPrefix)-\(Int64(Date().timeIntervalSince1970 * 1_000))-\(UUID().uuidString.lowercased()).json"
             )
             try payload.write(
                 to: destination,
                 options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
             )
-            try pruneQueue(in: directory)
-            return report(message: "Ожидается отправка", connectionState: .idle)
+            try pruneQueue(in: directory, for: endpoint)
+            return report(message: L10n.text("direct.message.waiting"), connectionState: .idle)
         } catch {
-            return report(message: "Не удалось поставить обновление в очередь", connectionState: .serverUnavailable)
+            return report(message: L10n.text("direct.message.queue_failed"), connectionState: .serverUnavailable)
         }
     }
 
     func checkConnection() async -> DirectHealthSyncReport {
         guard let healthURL else {
-            return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
+            return report(message: L10n.text("direct.message.not_configured"), connectionState: .notConfigured)
         }
 
         var request = URLRequest(url: healthURL)
@@ -86,37 +103,37 @@ actor DirectHealthSyncClient {
         do {
             let (_, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                return report(message: "Нет связи с Mac", connectionState: .unreachable)
+                return report(message: L10n.text("direct.message.offline"), connectionState: .unreachable)
             }
             switch http.statusCode {
             case 200..<300:
                 return report(message: nil, connectionState: .connected)
             case 401, 403:
-                return report(message: "Tailscale не подтвердил доступ", connectionState: .unauthorized)
+                return report(message: L10n.text("direct.message.access_denied"), connectionState: .unauthorized)
             case 500..<600:
-                return report(message: "Mac временно недоступен", connectionState: .serverUnavailable)
+                return report(message: L10n.text("direct.message.server_unavailable"), connectionState: .serverUnavailable)
             default:
-                return report(message: "Сервис синхронизации недоступен", connectionState: .serverUnavailable)
+                return report(message: L10n.text("direct.message.service_unavailable"), connectionState: .serverUnavailable)
             }
         } catch {
-            return report(message: "Нет связи с Mac", connectionState: .unreachable)
+            return report(message: L10n.text("direct.message.offline"), connectionState: .unreachable)
         }
     }
 
     func flush(force: Bool = false) async -> DirectHealthSyncReport {
         guard let endpoint else {
-            return report(message: "Прямая доставка не настроена", connectionState: .notConfigured)
+            return report(message: L10n.text("direct.message.not_configured"), connectionState: .notConfigured)
         }
         if !force,
            let nextRetry = defaults.object(forKey: nextRetryKey) as? Date,
            nextRetry > Date() {
-            return report(message: "Ожидается повторная отправка", connectionState: .unreachable)
+            return report(message: L10n.text("direct.message.retry_waiting"), connectionState: .unreachable)
         }
         let files: [URL]
         do {
-            files = try pendingFiles()
+            files = try pendingFiles(for: endpoint)
         } catch {
-            return report(message: "Очередь отправки недоступна", connectionState: .serverUnavailable)
+            return report(message: L10n.text("direct.message.queue_unavailable"), connectionState: .serverUnavailable)
         }
         guard !files.isEmpty else {
             return report(message: nil, connectionState: .idle)
@@ -150,20 +167,20 @@ actor DirectHealthSyncClient {
                 case 422:
                     try fileManager.removeItem(at: file)
                     clearBackoff()
-                    return report(message: "Mac отклонил некорректное обновление", connectionState: .serverUnavailable)
+                    return report(message: L10n.text("direct.message.invalid_update"), connectionState: .serverUnavailable)
                 case 401, 403:
                     scheduleRetry()
-                    return report(message: "Tailscale не подтвердил доступ", connectionState: .unauthorized)
+                    return report(message: L10n.text("direct.message.access_denied"), connectionState: .unauthorized)
                 case 500..<600:
                     scheduleRetry()
-                    return report(message: "Mac временно недоступен", connectionState: .serverUnavailable)
+                    return report(message: L10n.text("direct.message.server_unavailable"), connectionState: .serverUnavailable)
                 default:
                     scheduleRetry()
-                    return report(message: "Mac отклонил обновление", connectionState: .serverUnavailable)
+                    return report(message: L10n.text("direct.message.rejected"), connectionState: .serverUnavailable)
                 }
             } catch {
                 scheduleRetry()
-                return report(message: "Нет связи с Mac — обновление сохранено", connectionState: .unreachable)
+                return report(message: L10n.text("direct.message.offline_queued"), connectionState: .unreachable)
             }
         }
         return report(deliveredAt: deliveredAt, message: nil, connectionState: .connected)
@@ -195,23 +212,30 @@ actor DirectHealthSyncClient {
     }
 
     private func pendingFiles() throws -> [URL] {
+        guard let endpoint else { return [] }
+        return try pendingFiles(for: endpoint)
+    }
+
+    private func pendingFiles(for endpoint: URL) throws -> [URL] {
         let directory = try queueDirectory()
+        let prefix = "pending-\(queuePrefix(for: endpoint))-"
         return try fileManager.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         )
-        .filter { $0.lastPathComponent.hasPrefix("pending-") && $0.pathExtension == "json" }
+        .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "json" }
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    private func pruneQueue(in directory: URL) throws {
+    private func pruneQueue(in directory: URL, for endpoint: URL) throws {
+        let prefix = "pending-\(queuePrefix(for: endpoint))-"
         let files = try fileManager.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         )
-        .filter { $0.lastPathComponent.hasPrefix("pending-") && $0.pathExtension == "json" }
+        .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "json" }
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for stale in files.dropLast(maximumPendingFiles) {
             try? fileManager.removeItem(at: stale)
@@ -228,6 +252,11 @@ actor DirectHealthSyncClient {
     private func clearBackoff() {
         defaults.removeObject(forKey: failureCountKey)
         defaults.removeObject(forKey: nextRetryKey)
+    }
+
+    private func queuePrefix(for endpoint: URL) -> String {
+        let digest = SHA256.hash(data: Data(endpoint.absoluteString.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private func report(

@@ -2,11 +2,14 @@ import Foundation
 
 enum CloudExportStoreError: LocalizedError {
     case wouldReplacePopulatedSnapshotWithEmpty
+    case agentSnapshotMissing
 
     var errorDescription: String? {
         switch self {
         case .wouldReplacePopulatedSnapshotWithEmpty:
             "HealthKit временно не вернул данные; предыдущий снимок сохранён."
+        case .agentSnapshotMissing:
+            "Сначала создайте снимок данных, чтобы открыть его в приложении."
         }
     }
 }
@@ -33,8 +36,7 @@ final class CloudExportStore {
                     if startedAccess { selectedFolder.stopAccessingSecurityScopedResource() }
                 }
                 do {
-                    let url = selectedFolder
-                        .appendingPathComponent("Health JSON", isDirectory: true)
+                    let url = Self.exportRoot(for: selectedFolder)
                         .appendingPathComponent("Exports", isDirectory: true)
                     try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
                     return .selectedFolder(url)
@@ -97,6 +99,7 @@ final class CloudExportStore {
             withJSONObject: object,
             options: [.sortedKeys, .withoutEscapingSlashes]
         )
+        let csvData = try HealthContextCSVEncoder.data(from: object)
         let location = try await resolveLocation()
         let selectedFolder = folderAccess.resolve()
         let startedAccess = selectedFolder?.startAccessingSecurityScopedResource() ?? false
@@ -109,12 +112,16 @@ final class CloudExportStore {
             .appendingPathComponent("Agent", isDirectory: true)
         try fileManager.createDirectory(at: agentFolder, withIntermediateDirectories: true)
         let destination = agentFolder.appendingPathComponent("health-context.json")
+        let csvDestination = agentFolder.appendingPathComponent("health-context.csv")
         if !Self.hasHealthContent(object),
            let existingData = try? Data(contentsOf: destination),
            let existingObject = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
            Self.hasHealthContent(existingObject) {
             throw CloudExportStoreError.wouldReplacePopulatedSnapshotWithEmpty
         }
+        // Write CSV first so a failed CSV write leaves the JSON snapshot untouched.
+        // Each public file is atomically replaced; JSON remains the canonical sync contract.
+        try coordinatedWrite(csvData, to: csvDestination)
         try coordinatedWrite(data, to: destination)
         if let documents = try? fileManager.url(
             for: .documentDirectory,
@@ -152,7 +159,38 @@ final class CloudExportStore {
         return (location, destination, data)
     }
 
-    func makeAgentSnapshotShareCopy() async throws -> URL {
+    /// Reads the same canonical snapshot that is exported to iCloud Drive and
+    /// shared with other apps. File coordination keeps a viewer refresh from
+    /// observing an in-progress iCloud replacement.
+    func readAgentSnapshot() async throws -> Data {
+        let location = try await resolveLocation()
+        let selectedFolder = folderAccess.resolve()
+        let startedAccess = selectedFolder?.startAccessingSecurityScopedResource() ?? false
+        defer {
+            if startedAccess { selectedFolder?.stopAccessingSecurityScopedResource() }
+        }
+
+        let source = location.url
+            .deletingLastPathComponent()
+            .appendingPathComponent("Agent/health-context.json")
+        guard fileManager.fileExists(atPath: source.path) else {
+            throw CloudExportStoreError.agentSnapshotMissing
+        }
+
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var readResult: Result<Data, Error>?
+        coordinator.coordinate(readingItemAt: source, options: [], error: &coordinationError) { url in
+            readResult = Result {
+                try Data(contentsOf: url, options: .mappedIfSafe)
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let readResult else { throw CloudExportStoreError.agentSnapshotMissing }
+        return try readResult.get()
+    }
+
+    func makeAgentSnapshotShareCopy(format: ShareFormat) async throws -> URL {
         let location = try await resolveLocation()
         let selectedFolder = folderAccess.resolve()
         return try await Task.detached(priority: .userInitiated) { [fileManager] in
@@ -163,7 +201,7 @@ final class CloudExportStore {
 
             let source = location.url
                 .deletingLastPathComponent()
-                .appendingPathComponent("Agent/health-context.json")
+                .appendingPathComponent("Agent/\(format.fileName)")
             guard fileManager.fileExists(atPath: source.path) else {
                 throw CocoaError(.fileNoSuchFile)
             }
@@ -171,11 +209,17 @@ final class CloudExportStore {
             let shareFolder = fileManager.temporaryDirectory
                 .appendingPathComponent("HealthJSONShare", isDirectory: true)
             try fileManager.createDirectory(at: shareFolder, withIntermediateDirectories: true)
-            let destination = shareFolder.appendingPathComponent("health-context.json")
+            let destination = shareFolder.appendingPathComponent(format.fileName)
             try? fileManager.removeItem(at: destination)
             try fileManager.copyItem(at: source, to: destination)
             return destination
         }.value
+    }
+
+    static func exportRoot(for selectedFolder: URL) -> URL {
+        selectedFolder.lastPathComponent.caseInsensitiveCompare("Health JSON") == .orderedSame
+            ? selectedFolder
+            : selectedFolder.appendingPathComponent("Health JSON", isDirectory: true)
     }
 
     private static func hasHealthContent(_ object: [String: Any]) -> Bool {

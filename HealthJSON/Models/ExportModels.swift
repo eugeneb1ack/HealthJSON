@@ -1,5 +1,21 @@
 import Foundation
 
+enum ShareFormat: String, CaseIterable, Identifiable {
+    case json
+    case csv
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .json: "JSON"
+        case .csv: "CSV"
+        }
+    }
+
+    var fileName: String { "health-context.\(rawValue)" }
+}
+
 struct ExportIssue: Codable, Equatable {
     let typeIdentifier: String
     let message: String

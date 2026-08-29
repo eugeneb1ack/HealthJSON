@@ -1,36 +1,79 @@
+<p align="center">
+  <img src="docs/assets/health-json-cover.png" alt="Health JSON: приватный экспорт Apple Health с iPhone в JSON, CSV и защищённый API" width="100%">
+</p>
+
 # Health JSON
 
-Health JSON is a private iPhone exporter for Apple Health data. It sends compact updates directly to the owner's trainer over private Tailscale HTTPS and keeps **iCloud Drive → Health JSON → Agent** as a durable fallback.
+**Приватный экспорт данных Apple Health с iPhone в JSON, CSV и локальный HTTPS API.**
 
-The AI file covers the most recent 365 days. Cumulative metrics such as steps, distance, and energy are summed by day. Discrete measurements such as heart rate, oxygen saturation, HRV, respiratory rate, temperature, blood pressure, glucose, and body measurements include daily average, minimum, maximum, and latest values. Sleep is split into stages and duration, with activity rings, workouts, symptoms, ECG summaries, mental-state entries, and assessments where available. UUIDs, device details, source applications, and arbitrary metadata are omitted to save model context.
+Health JSON нужен, когда данные уже есть в приложении «Здоровье» на iPhone, но работать с ними нужно за пределами Apple Health: на Mac, Linux-сервере, NAS, Raspberry Pi, в таблице, собственной программе или AI-агенте. Приложение создаёт понятный снимок за последние 365 дней и передаёт его выбранным пользователем способом — через iCloud Drive, системное меню «Поделиться» или в приватный API внутри Tailscale.
 
-The canonical `health-context.json` is a complete snapshot. Automatic synchronization coalesces HealthKit events for up to five minutes, posts the resulting JSON directly to bot-trainer, and also writes small immutable three-day updates under `Agent/Inbox`. Failed direct deliveries stay in the app's protected retry queue with exponential backoff. A daily full snapshot reconciles older corrections. Manual **Update single JSON** creates and sends a complete snapshot immediately.
+Это не медицинский сервис и не облако Health JSON: приложение не создаёт аккаунт, не отправляет данные на сервер разработчика и не даёт рекомендаций по здоровью. Управление доступом, место хранения и получатель всегда выбирает владелец iPhone.
 
-## Architecture
+## Для чего это пригодится
 
-1. The app requests read-only HealthKit access.
-2. HealthKit statistics merge duplicate sources and generate compact daily health aggregates.
-3. `HKObserverQuery` marks supported HealthKit changes as pending. Immediate background delivery writes a coalesced recent-window update when iOS grants execution time; `BGAppRefreshTask` retries pending work and performs periodic reconciliation.
-4. The update is delivered to the localhost-only bot-trainer ingest service through Tailscale Serve HTTPS. Tailscale identity is checked before import; the raw request body is not retained.
-5. The same data is written atomically to iCloud, so direct-network outages do not lose the export.
-6. An optional technical raw archive remains available under **Health JSON → Exports** for detailed debugging, but an AI agent should use bot-trainer's normalized database.
+- **Таблицы и личная аналитика.** Открыть актуальный CSV в Numbers, Excel, LibreOffice или pandas и сравнивать сон, активность, тренировки и измерения.
+- **Свой продукт или автоматизация.** Получать нормализованный JSON в приложении, базе данных или домашнем сервере по документированному приватному HTTPS-контракту.
+- **AI-агенты.** Давать агенту не сырые бесконечные выгрузки, а небольшой снимок и последующие изменения: строить персональную базовую линию, искать тренды и готовить сводки. Агент не должен ставить диагнозы или менять лечение.
+- **Устройства без Apple Health.** Использовать данные на любом совместимом получателе внутри личной сети: это может быть не только Mac, а любой компьютер, сервер или устройство с HTTPS-сервисом в tailnet Tailscale.
 
-There is intentionally no fixed timer. Five minutes is a coalescing interval, not a guaranteed deadline: iOS decides when background work runs and may throttle HealthKit delivery. Once an export starts, direct delivery normally completes in seconds. Pending state and the direct retry queue survive an app restart; manual sync is always available.
+## Как это устроено
 
-## Run on an iPhone
+```text
+Apple Health на iPhone
+          │  разрешённое чтение HealthKit
+          ▼
+      Health JSON
+       │       │
+       │       ├── iCloud Drive: JSON + CSV
+       │       ├── «Поделиться»: свежий JSON или CSV
+       │       └── Tailscale: приватный HTTPS API (по желанию)
+       ▼
+Таблица · своё приложение · сервер · AI-агент
+```
 
-1. Open `HealthJSON.xcodeproj` in Xcode 26 or newer.
-2. Select the **HealthJSON** target, then select your Apple Developer team.
-3. Change `PRODUCT_BUNDLE_IDENTIFIER` if Xcode reports that `com.johndoe.HealthJSON` is unavailable.
-4. In **Signing & Capabilities**, confirm **HealthKit** and **Background Delivery**. No iCloud capability is required, so a free Personal Team can sign the app.
-5. Build to a physical iPhone. HealthKit background delivery cannot be tested in Simulator.
-6. Keep Tailscale connected on the iPhone, choose a private iCloud Drive folder, grant Health access, then tap **Update single JSON for AI**. The status card shows the last delivery to the trainer or the number of queued retries.
+Основной файл — полный снимок `health-context.json`. CSV записывается рядом для табличных программ, но JSON остаётся каноническим контрактом для автоматизации и API. Встроенный экран **«Данные здоровья»** читает именно этот JSON, а не запускает второй тяжёлый запрос к HealthKit: то, что видно в приложении, соответствует экспортированному файлу.
 
-The first export can take a long time for a large history. Keep the app open until it completes. Later exports are incremental.
+## Документация
 
-## Agent JSON format
+| Что нужно сделать | Документ |
+| --- | --- |
+| Понять назначение, поставить на iPhone и сделать первый экспорт | [Установка и первый запуск](docs/INSTALLATION_RU.md) |
+| Настроить личную доставку на любой Tailscale-узел | [Tailscale и приватный API](docs/TAILSCALE_RU.md) |
+| Реализовать приёмник или читатель iCloud в другом приложении | [Контракт интеграции](docs/INTEGRATION.md) |
+| Подключить AI-агента бережно к контексту и дельтам | [Инструкция для агента](docs/AGENT_INSTRUCTIONS.md) |
+| Разобраться в очередях, фоновом обновлении и архитектуре | [Технические заметки](docs/IMPLEMENTATION.md) |
+| Пошаговая справка по функциям iPhone-приложения | [Руководство пользователя](docs/USER_GUIDE_RU.md) |
 
-The file uses compact row arrays. Their column meanings are declared once in `rowFormats`, avoiding repeated field names and saving tokens:
+## Быстрый старт
+
+1. Откройте [`HealthJSON.xcodeproj`](HealthJSON.xcodeproj) в Xcode и установите приложение на **физический iPhone**. Simulator не поддерживает нужный сценарий HealthKit.
+2. В приложении выдайте доступ к данным «Здоровья» и выберите личную папку iCloud Drive.
+3. Нажмите **«Обновить данные»**. Появятся `Health JSON/Agent/health-context.json` и `health-context.csv`.
+4. Для таблицы используйте CSV. Для своей программы или агента используйте JSON и поле `generatedAt` как ревизию снимка.
+5. Если нужна доставка без ожидания iCloud, настройте свой `.ts.net`-адрес в **«Tailscale и API»** по [руководству Tailscale](docs/TAILSCALE_RU.md). Адрес не зашит в приложение и может быть изменён владельцем в любой момент.
+
+Подробно о подписи приложения, требованиях и типичных проблемах — в [руководстве по установке](docs/INSTALLATION_RU.md).
+
+## Экспорт и актуальность данных
+
+- **Полный снимок.** Ручная кнопка «Обновить данные», кнопка обновления внутри просмотра и «Поделиться» создают новый снимок за 365 дней. JSON и CSV записываются атомарно: сначала CSV, затем JSON; неудачная запись CSV не меняет текущий JSON.
+- **Автоматическое обновление.** `HKObserverQuery` отмечает изменения HealthKit; близкие события объединяются максимум на пять минут. iOS сам решает, когда выдать фоновое время, поэтому это не таймер и не обещание доставки «в ту же минуту».
+- **Сверка раз в сутки.** Полный снимок забирает поздние поправки от источников HealthKit.
+- **Защита от зависаний.** Экспорт ограничивает число одновременных тяжёлых запросов до восьми, отдельный запрос останавливается по тайм-ауту 30 секунд, а параллельные ручные обновления сериализуются в одну очередь.
+- **Прямая доставка.** Если приватный приёмник временно недоступен, JSON остаётся в iCloud, а запрос сохраняется в защищённую очередь на iPhone и повторяется с задержкой. Очередь привязана к конкретному адресу: после смены адреса старые данные не попадут новому получателю.
+
+## Что входит в снимок
+
+При наличии разрешения HealthKit приложение собирает ежедневные агрегаты для накопительных показателей (например, шагов, дистанции и энергии) и среднее/минимум/максимум/последнее значение для дискретных измерений (например, пульса, HRV, сатурации, дыхания, температуры, давления, глюкозы и параметров тела). Также экспортируются сон, кольца активности, тренировки, симптомы, сводки ЭКГ, состояние психики и отдельные специальные записи, если их отдаёт HealthKit.
+
+Для экономии контекста в основной агентский снимок не входят UUID, устройства-источники, приложения-источники и произвольные метаданные. Более детальный технический архив находится в `Health JSON/Exports` и не предназначен для регулярной загрузки в модель.
+
+## Форматы и интеграция
+
+### JSON — контракт для программ
+
+`health-context.json` имеет `schemaVersion: 1` и `kind: "health-agent-context"`. Поле `rowFormats` один раз описывает порядок значений в компактных строках, поэтому приложение-получатель не должен угадывать колонки. Поле `generatedAt` — версия полного снимка: если она не изменилась, повторная обработка не нужна.
 
 ```json
 {
@@ -44,83 +87,42 @@ The file uses compact row arrays. Their column meanings are declared once in `ro
     "oxygenSaturation": {
       "unit": "%",
       "aggregation": "dailyAverageMinMaxLatest",
-      "daily": [["2026-07-11", 0.98, 0.95, 1.0, 0.99]]
+      "daily": [["2026-07-11", 0.98, 0.95, 1, 0.99]]
     }
   }
 }
 ```
 
-Validate the file on the Mac with:
+### CSV — для людей и таблиц
 
-```sh
-python3 mac/healthjson.py validate-agent \
-  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Agent/health-context.json"
-```
+`health-context.csv` использует UTF-8, CRLF и экранирование RFC 4180. В нём есть единые поля периода, вида записи, показателя, единицы и значений; сложные объекты (тренировка, кольца, специальные записи) сохраняются в `details_json`. CSV удобен для анализа, но не должен быть транспортным API: в нём нет полной типизированной структуры JSON.
 
-Do not inject the full year into every model call. Generate a compact rolling window instead:
+Прямая интеграция описана в [контракте API и iCloud](docs/INTEGRATION.md), включая `GET /health-json/health`, `POST /health-json/v1/import`, идемпотентность и обработку дельт.
 
-```sh
-python3 mac/healthjson.py context \
-  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Agent/health-context.json" \
-  --days 30
-```
+## Конфиденциальность и ограничения
 
-The real 7-day file in this project was reduced from about 432 KB to about 9 KB. See [the agent workflow](docs/AGENT_INSTRUCTIONS.md) for first ingestion, subsequent updates, and a ready system prompt.
+- HealthKit не сообщает приложению, какие разрешения на **чтение** были отклонены. Отсутствие строки не доказывает отсутствия данных.
+- iCloud-файлы — обычные JSON и CSV в папке, выбранной пользователем. Защищайте Apple ID, устройства и доступ к этой папке.
+- Tailscale-режим — это приватный HTTPS-маршрут в tailnet, а не публичный вебхук. Не используйте Tailscale Funnel для медицинских данных.
+- Транспорт защищён, но смысловой доступ остаётся ответственностью владельца: ограничьте правила tailnet и валидируйте JSON на стороне приёмника.
+- Клинические FHIR-записи намеренно не запрашиваются. Маршруты тренировок, ЭКГ и пульсовые серии могут быть особенно чувствительны — делитесь ими осознанно.
+- Приложение не является медицинским изделием. Любые тревожные симптомы и показатели требуют оценки медицинским специалистом.
 
-For a persistent hourly agent, use the stateful delta command instead. The first call returns the baseline once; later calls return only changed rows, or a tiny `unchanged` response:
-
-```sh
-python3 mac/healthjson.py agent-delta \
-  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Agent/health-context.json" \
-  --state "$HOME/.healthjson-agent/state.json" \
-  --days 365
-```
-
-## Raw archive format
-
-Every file is a self-contained change set:
-
-```json
-{
-  "schemaVersion": 2,
-  "mode": "changes",
-  "exportedAt": "2026-07-11T12:00:00.000Z",
-  "typeIdentifier": "HKCategoryTypeIdentifierSleepAnalysis",
-  "added": [],
-  "deleted": [{ "uuid": "..." }]
-}
-```
-
-`mode: "changes"` contains additions/deletions since the previous HealthKit anchor. `mode: "snapshot"` replaces the previous value of non-anchored datasets such as characteristics, medications, and activity summaries.
-
-## Use on the Mac
-
-The files are directly readable in Finder. A dependency-free companion CLI validates them and materializes their current state:
-
-```sh
-EXPORTS="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Exports"
-python3 mac/healthjson.py validate "$EXPORTS"
-python3 mac/healthjson.py summary "$EXPORTS"
-python3 mac/healthjson.py materialize "$EXPORTS" current-health.json
-```
-
-You can also drag the `Exports` folder into Terminal after typing the command to avoid locating the iCloud container path manually.
-
-Quantity samples contain a numeric `value` and `unit` using HealthKit's preferred unit for the device. Source, device, metadata, dates, and subtype-specific fields are included where HealthKit exposes them.
-
-## Privacy and limitations
-
-- HealthKit never tells an app which read permissions were denied. Missing data does not prove that no data exists.
-- A user can grant only a recent window of history.
-- The iCloud fallback is unencrypted JSON inside the folder selected by the user. Direct transport uses tailnet-only HTTPS and accepts only the configured Tailscale identity.
-- ECG voltage points, workout route coordinates, and heartbeat beat-by-beat series are exported using their dedicated streaming HealthKit queries. A series-level error is recorded on the parent sample without losing the rest of the export.
-- Clinical Health Records are deliberately not requested. They are FHIR records from hospital or laboratory patient portals and trigger a separate provider-account flow; they are not required for personal iPhone and Apple Watch health data.
-
-## Build from the command line
+## Сборка
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -project HealthJSON.xcodeproj -target HealthJSON \
-  -sdk iphonesimulator \
-  CODE_SIGNING_ALLOWED=NO build
+  -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
+```
+
+Проверка и подготовка контекста на Mac без дополнительных библиотек:
+
+```sh
+python3 mac/healthjson.py validate-agent \
+  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Agent/health-context.json"
+
+python3 mac/healthjson.py agent-delta \
+  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Health JSON/Agent/health-context.json" \
+  --state "$HOME/.healthjson-agent/state.json" --days 365
 ```

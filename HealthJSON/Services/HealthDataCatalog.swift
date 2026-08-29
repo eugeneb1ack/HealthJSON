@@ -9,9 +9,6 @@ enum HealthDataCatalog {
         types += categoryIdentifiers.compactMap {
             HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: $0))
         }
-        types += correlationIdentifiers.compactMap {
-            HKObjectType.correlationType(forIdentifier: HKCorrelationTypeIdentifier(rawValue: $0))
-        }
         types += scoredAssessmentIdentifiers.map {
             HKScoredAssessmentType(HKScoredAssessmentTypeIdentifier(rawValue: $0))
         }
@@ -21,8 +18,6 @@ enum HealthDataCatalog {
         types.append(HKObjectType.audiogramSampleType())
         types.append(HKObjectType.electrocardiogramType())
         types.append(HKObjectType.stateOfMindType())
-        types.append(HKObjectType.medicationDoseEventType())
-        types.append(HKObjectType.visionPrescriptionType())
 
         return Dictionary(grouping: types, by: \.identifier)
             .compactMap(\.value.first)
@@ -32,8 +27,7 @@ enum HealthDataCatalog {
     static var readTypes: Set<HKObjectType> {
         let directlyAuthorizableSamples = sampleTypes
         return Set(directlyAuthorizableSamples.map { $0 as HKObjectType } + characteristicTypes + [
-            HKObjectType.activitySummaryType(),
-            HKObjectType.userAnnotatedMedicationType()
+            HKObjectType.activitySummaryType()
         ])
     }
 
@@ -61,11 +55,6 @@ enum HealthDataCatalog {
         HKObjectType.characteristicType(forIdentifier: .wheelchairUse),
         HKObjectType.characteristicType(forIdentifier: .activityMoveMode)
     ].compactMap { $0 }
-
-    private static let correlationIdentifiers = [
-        "HKCorrelationTypeIdentifierBloodPressure",
-        "HKCorrelationTypeIdentifierFood"
-    ]
 
     private static let scoredAssessmentIdentifiers = [
         "HKScoredAssessmentTypeIdentifierGAD7",

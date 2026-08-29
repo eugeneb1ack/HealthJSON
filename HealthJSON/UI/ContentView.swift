@@ -13,12 +13,15 @@ struct ContentView: View {
                     header
                     statusCard
                     syncCard
+                    exportCard
+                    dataViewerCard
+                    connectionCard
                     privacyCard
                 }
                 .padding(20)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Здоровье в JSON")
+            .navigationTitle(L10n.text("home.title"))
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showsFolderPicker) {
                 FolderPicker { url in
@@ -40,21 +43,29 @@ struct ContentView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .fill(.red.gradient)
-                    .frame(width: 88, height: 88)
-                Image(systemName: "heart.text.clipboard")
-                    .font(.system(size: 38, weight: .semibold))
+                    .frame(width: 84, height: 84)
+                Image(systemName: "heart.text.clipboard.fill")
+                    .font(.system(size: 36, weight: .semibold))
                     .foregroundStyle(.white)
             }
-            Text("Данные здоровья — в одном JSON")
+
+            Text(L10n.text("home.hero.title"))
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
-            Text("Резервная копия в iCloud и быстрая синхронизация через Tailscale.")
+                .lineLimit(2)
+                .minimumScaleFactor(0.9)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(L10n.text("home.hero.subtitle"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.9)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     private var statusCard: some View {
@@ -62,38 +73,33 @@ struct ContentView: View {
             statusRow(
                 icon: coordinator.hasRequestedAuthorization ? "checkmark.shield.fill" : "shield.lefthalf.filled",
                 color: coordinator.hasRequestedAuthorization ? .green : .orange,
-                title: "Доступ к Здоровью",
-                value: coordinator.hasRequestedAuthorization ? "Запрошен" : "Не запрошен"
+                title: L10n.text("home.status.health_access"),
+                value: coordinator.hasRequestedAuthorization
+                    ? L10n.text("home.status.requested")
+                    : L10n.text("home.status.not_requested")
             )
             Divider().padding(.leading, 44)
             statusRow(
                 icon: coordinator.exportLocation?.isSelectedFolder == true ? "icloud.fill" : "folder.fill",
                 color: coordinator.exportLocation?.isSelectedFolder == true ? .blue : .orange,
-                title: "Хранилище",
-                value: coordinator.exportLocation?.isSelectedFolder == true ? "Выбранная папка" : "Нужно выбрать"
+                title: L10n.text("home.status.storage"),
+                value: coordinator.exportLocation?.isSelectedFolder == true
+                    ? L10n.text("home.status.icloud_drive")
+                    : L10n.text("home.status.needs_folder")
             )
             Divider().padding(.leading, 44)
             statusRow(
                 icon: "arrow.triangle.2.circlepath",
                 color: coordinator.automaticSyncEnabled && coordinator.backgroundDeliveryEnabled ? .green : .secondary,
-                title: "Автосинхронизация",
-                value: coordinator.automaticSyncEnabled
-                    ? (coordinator.backgroundDeliveryEnabled ? "Включена" : "Ожидание")
-                    : "Приостановлена"
-            )
-            Divider().padding(.leading, 44)
-            statusRow(
-                icon: directSyncIcon,
-                color: directSyncColor,
-                title: "Tailscale",
-                value: directSyncText
+                title: L10n.text("home.status.automatic_sync"),
+                value: automaticSyncStatus
             )
             Divider().padding(.leading, 44)
             statusRow(
                 icon: "clock.badge.checkmark",
-                color: coordinator.lastBackgroundSyncDate == nil ? .secondary : .green,
-                title: "Последняя фоновая",
-                value: backgroundSyncText
+                color: coordinator.lastSyncDate == nil ? .secondary : .green,
+                title: L10n.text("home.status.last_update"),
+                value: compactLastSyncText
             )
         }
         .cardStyle()
@@ -101,21 +107,37 @@ struct ContentView: View {
 
     private var syncCard: some View {
         VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(L10n.text("home.sync.title"), systemImage: "arrow.triangle.2.circlepath")
+                    .font(.headline)
+                    .lineLimit(2)
+                    .layoutPriority(1)
+                Spacer(minLength: 8)
+                if !isBusy, coordinator.hasRequestedAuthorization {
+                    Label(L10n.text("home.sync.ready"), systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .lineLimit(1)
+                }
+            }
+
             phaseView
 
             if !coordinator.hasRequestedAuthorization {
                 Button {
                     Task { await coordinator.requestAuthorization() }
                 } label: {
-                    Label("Разрешить доступ", systemImage: "heart.fill")
-                        .frame(maxWidth: .infinity)
+                    Label(L10n.text("home.sync.authorize"), systemImage: "heart.fill")
+                        .actionLabelStyle()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .controlSize(.large)
             } else {
+                Divider()
+
                 Toggle(
-                    "Автоматическая синхронизация",
+                    L10n.text("home.sync.automatic_toggle"),
                     isOn: Binding(
                         get: { coordinator.automaticSyncEnabled },
                         set: { enabled in
@@ -124,52 +146,52 @@ struct ContentView: View {
                     )
                 )
                 .tint(.green)
+                .lineLimit(2)
 
-                Text(
-                    coordinator.automaticSyncEnabled
-                        ? (coordinator.automaticChangesPending
-                            ? "Изменения накоплены и будут синхронизированы в ближайшем обновлении."
-                            : "При изменениях HealthKit: напрямую на Mac, с объединением до 5 минут. iCloud остаётся резервом.")
-                        : "Автоматическое обновление приостановлено."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                Toggle(
-                    "Tailscale",
-                    isOn: Binding(
-                        get: { coordinator.directSyncEnabled },
-                        set: { enabled in
-                            Task { await coordinator.setDirectSyncEnabled(enabled) }
-                        }
-                    )
-                )
-                .tint(.blue)
-
-                HStack(alignment: .firstTextBaseline) {
-                    Text(directSyncHelpText)
-                    Spacer(minLength: 8)
-                    if coordinator.directSyncEnabled {
-                        Button("Проверить") {
-                            Task { await coordinator.checkDirectSyncConnection() }
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(automaticSyncDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Button {
-                    Task { await coordinator.syncChanges() }
+                    Task { _ = await coordinator.syncChanges() }
                 } label: {
-                    Label("Обновить единый JSON", systemImage: "heart.text.clipboard")
-                        .frame(maxWidth: .infinity)
+                    Label(L10n.text("home.sync.update"), systemImage: "heart.text.clipboard")
+                        .actionLabelStyle()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.red)
                 .controlSize(.large)
                 .disabled(isBusy)
-
             }
+        }
+        .cardStyle(padding: 18)
+    }
+
+    private var exportCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(L10n.text("home.export.title"), systemImage: "square.and.arrow.up")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Text(L10n.text("home.status.icloud_drive"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Picker(
+                L10n.text("home.export.format_picker"),
+                selection: Binding(
+                    get: { coordinator.shareFormat },
+                    set: { coordinator.setShareFormat($0) }
+                )
+            ) {
+                ForEach(ShareFormat.allCases) { format in
+                    Text(format.title).tag(format)
+                }
+            }
+            .pickerStyle(.segmented)
 
             Button {
                 Task {
@@ -178,8 +200,11 @@ struct ContentView: View {
                     }
                 }
             } label: {
-                Label("Поделиться единым файлом", systemImage: "doc.badge.arrow.up")
-                    .frame(maxWidth: .infinity)
+                Label(
+                    L10n.format("home.export.share_file", coordinator.shareFormat.title),
+                    systemImage: "square.and.arrow.up"
+                )
+                .actionLabelStyle()
             }
             .buttonStyle(.bordered)
             .disabled(isBusy)
@@ -189,20 +214,105 @@ struct ContentView: View {
             } label: {
                 Label(
                     coordinator.exportLocation?.isSelectedFolder == true
-                        ? "Изменить папку iCloud Drive"
-                        : "Выбрать папку iCloud Drive",
-                    systemImage: "folder.badge.plus"
+                        ? L10n.text("home.export.change_folder")
+                        : L10n.text("home.export.choose_folder"),
+                    systemImage: "folder.badge.gearshape"
                 )
-                .frame(maxWidth: .infinity)
+                .actionLabelStyle()
             }
             .buttonStyle(.bordered)
             .disabled(isBusy)
 
-            Text("Единый файл содержит только доступные показатели за последний год: дневные агрегаты, сон, пульс, кислород, HRV, тренировки и события.")
+            Text(L10n.text("home.export.caption"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .cardStyle(padding: 18)
+    }
+
+    private var connectionCard: some View {
+        NavigationLink {
+            TailscaleSettingsView()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 42, height: 42)
+                    .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.text("home.connection.title"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text(L10n.text("home.connection.subtitle"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cardStyle()
+    }
+
+    private var dataViewerCard: some View {
+        NavigationLink {
+            HealthDataViewerView()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "list.bullet.rectangle.portrait.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.teal)
+                    .frame(width: 42, height: 42)
+                    .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.text("home.viewer.title"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text(L10n.text("home.viewer.subtitle"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cardStyle()
+    }
+
+    private var privacyCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.fill")
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+            Text(L10n.text("home.privacy.caption"))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .cardStyle()
     }
 
     @ViewBuilder
@@ -211,34 +321,47 @@ struct ContentView: View {
         case .idle:
             Label(lastSyncText, systemImage: "clock")
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
         case .requestingAccess:
-            HStack { ProgressView(); Text("Ожидание разрешения HealthKit…") }
+            HStack {
+                ProgressView()
+                Text(L10n.text("home.phase.requesting_access"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .exporting(let current, let total, let type):
             VStack(alignment: .leading, spacing: 8) {
-                HStack { ProgressView(); Text("Экспорт: \(type)").lineLimit(1) }
+                HStack(alignment: .top) {
+                    ProgressView()
+                    Text(L10n.format("home.phase.exporting", type))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ProgressView(value: Double(current), total: Double(total))
-                Text("Тип \(current) из \(total)")
+                Text(L10n.format("home.phase.progress", current, total))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         case .finished(let stats):
             VStack(alignment: .leading, spacing: 8) {
                 Label(
                     stats.typesFailed == 0
-                        ? (stats.filesWritten == 1
-                            ? "Единый файл обновлён · разделов и записей: \(stats.samplesAdded)"
-                            : "Файлов: \(stats.filesWritten) · добавлено: \(stats.samplesAdded) · удалено: \(stats.samplesDeleted)")
-                        : "Файлов: \(stats.filesWritten) · ошибок: \(stats.typesFailed)",
+                        ? L10n.format("home.phase.finished", stats.samplesAdded)
+                        : L10n.format("home.phase.finished_with_errors", stats.typesFailed),
                     systemImage: stats.typesFailed == 0 ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
                 )
                 .foregroundStyle(stats.typesFailed == 0 ? Color.green : Color.orange)
+                .lineLimit(2)
+
                 if stats.typesSkipped > 0 {
-                    Text("Пропущено недоступных или неразрешённых типов: \(stats.typesSkipped)")
+                    Text(L10n.format("home.phase.skipped", stats.typesSkipped))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+
                 if !stats.issues.isEmpty {
-                    DisclosureGroup("Диагностика") {
+                    DisclosureGroup(L10n.text("home.phase.diagnostics")) {
                         ForEach(Array(stats.issues.prefix(10).enumerated()), id: \.offset) { _, issue in
                             Text("\(readableIssueType(issue.typeIdentifier)): \(issue.message)")
                                 .font(.caption2)
@@ -251,33 +374,24 @@ struct ContentView: View {
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
+                .lineLimit(3)
         }
-    }
-
-    private var privacyCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Важно", systemImage: "lock.fill")
-                .font(.headline)
-            Text("Данные о здоровье чувствительны. Прямая доставка доступна только внутри вашего зашифрованного Tailscale-соединения; iCloud остаётся резервной копией.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("Автосинхронизацию и прямую отправку через Tailscale можно выключать независимо. Неотправленные обновления остаются в защищённой очереди приложения и повторяются после включения. Ручная кнопка всегда обновляет iCloud, а при включённом Tailscale отправляет полный снимок сразу. Точное время фонового запуска определяет iOS.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .cardStyle(padding: 18)
     }
 
     private func statusRow(icon: String, color: Color, title: String, value: String) -> some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: icon)
                 .foregroundStyle(color)
                 .frame(width: 32)
             Text(title)
-            Spacer()
+                .lineLimit(2)
+                .layoutPriority(1)
+            Spacer(minLength: 8)
             Text(value)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .font(.subheadline)
         .padding(14)
@@ -290,92 +404,31 @@ struct ContentView: View {
         }
     }
 
+    private var automaticSyncStatus: String {
+        guard coordinator.automaticSyncEnabled else { return L10n.text("home.status.paused") }
+        return coordinator.backgroundDeliveryEnabled
+            ? L10n.text("home.status.enabled")
+            : L10n.text("home.status.waiting_ios")
+    }
+
     private var lastSyncText: String {
-        guard let date = coordinator.lastSyncDate else { return "Синхронизации ещё не было" }
-        return "Последняя синхронизация: \(date.formatted(date: .abbreviated, time: .shortened))"
+        guard let date = coordinator.lastSyncDate else { return L10n.text("home.last_sync.never") }
+        return L10n.format("home.last_sync.full", L10n.dateTime(date))
     }
 
-    private var backgroundSyncText: String {
-        guard let date = coordinator.lastBackgroundSyncDate else { return "Ожидается iOS" }
-        return date.formatted(date: .omitted, time: .shortened)
+    private var compactLastSyncText: String {
+        guard let date = coordinator.lastSyncDate else { return L10n.text("home.last_sync.never_short") }
+        return L10n.compactDateTime(date)
     }
 
-    private var directSyncText: String {
-        guard coordinator.directSyncEnabled else {
-            return coordinator.directSyncPendingCount > 0
-                ? "Выключено · в очереди: \(coordinator.directSyncPendingCount)"
-                : "Выключено"
+    private var automaticSyncDescription: String {
+        guard coordinator.automaticSyncEnabled else {
+            return L10n.text("home.sync.automatic_paused")
         }
-        switch coordinator.directSyncConnectionState {
-        case .checking:
-            return "Проверка…"
-        case .connected:
-            if let date = coordinator.lastDirectSyncDate {
-                return "Подключено · \(date.formatted(date: .omitted, time: .shortened))"
-            }
-            return "Подключено"
-        case .unauthorized:
-            return "Нет доступа"
-        case .unreachable:
-            return coordinator.directSyncPendingCount > 0 ? "Нет связи · данные в очереди" : "Нет связи"
-        case .serverUnavailable:
-            return coordinator.directSyncMessage ?? "Mac недоступен"
-        case .notConfigured:
-            return "Не настроено"
-        case .idle:
-            break
+        if coordinator.automaticChangesPending {
+            return L10n.text("home.sync.automatic_pending")
         }
-        if coordinator.directSyncPendingCount > 0 {
-            return coordinator.directSyncMessage ?? "В очереди: \(coordinator.directSyncPendingCount)"
-        }
-        guard let date = coordinator.lastDirectSyncDate else {
-            return coordinator.directSyncMessage ?? "Ожидается отправка"
-        }
-        return date.formatted(date: .omitted, time: .shortened)
-    }
-
-    private var directSyncHelpText: String {
-        guard coordinator.directSyncEnabled else {
-            return "Прямая отправка выключена; файл продолжает сохраняться в iCloud."
-        }
-        switch coordinator.directSyncConnectionState {
-        case .connected:
-            return "Защищённое соединение доступно."
-        case .checking:
-            return "Проверяю защищённый канал до Mac."
-        case .unauthorized:
-            return "Mac доступен, но Tailscale не подтвердил пользователя."
-        case .unreachable:
-            return "Включите Tailscale на iPhone и Mac; данные не потеряются."
-        case .serverUnavailable:
-            return "Tailscale доступен, но сервис синхронизации не отвечает."
-        case .notConfigured:
-            return "Адрес приёмника не настроен в этой сборке."
-        case .idle:
-            return "Статус обновится при проверке или отправке."
-        }
-    }
-
-    private var directSyncIcon: String {
-        guard coordinator.directSyncEnabled else { return "paperplane.slash.fill" }
-        switch coordinator.directSyncConnectionState {
-        case .connected: return "checkmark.icloud.fill"
-        case .checking: return "arrow.triangle.2.circlepath"
-        case .unauthorized: return "lock.trianglebadge.exclamationmark.fill"
-        case .unreachable, .serverUnavailable: return "wifi.exclamationmark"
-        case .notConfigured: return "gear.badge.xmark"
-        case .idle: return coordinator.directSyncPendingCount > 0 ? "clock.arrow.circlepath" : "paperplane.circle.fill"
-        }
-    }
-
-    private var directSyncColor: Color {
-        guard coordinator.directSyncEnabled else { return .secondary }
-        switch coordinator.directSyncConnectionState {
-        case .connected: return .green
-        case .checking, .idle: return coordinator.directSyncPendingCount > 0 ? .orange : .secondary
-        case .unreachable, .serverUnavailable: return .orange
-        case .unauthorized, .notConfigured: return .red
-        }
+        return L10n.text("home.sync.automatic_description")
     }
 
     private func readableIssueType(_ identifier: String) -> String {
@@ -405,15 +458,28 @@ private extension View {
     func cardStyle(padding: CGFloat = 0) -> some View {
         self
             .padding(padding)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .stroke(Color.primary.opacity(0.06), lineWidth: 1)
             }
     }
+
+    func actionLabelStyle() -> some View {
+        self
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .minimumScaleFactor(0.85)
+            .fixedSize(horizontal: false, vertical: true)
+    }
 }
 
-#Preview {
-    ContentView()
-        .environmentObject(HealthExportCoordinator.shared)
+#if DEBUG
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+            .environmentObject(HealthExportCoordinator.shared)
+    }
 }
+#endif

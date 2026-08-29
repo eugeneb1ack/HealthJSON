@@ -13,12 +13,15 @@ final class HealthExportCoordinator: ObservableObject {
     @Published private(set) var directSyncPendingCount = 0
     @Published private(set) var directSyncMessage: String?
     @Published private(set) var directSyncConnectionState: DirectHealthSyncConnectionState = .idle
+    @Published private(set) var directSyncEndpoint: String?
+    @Published private(set) var endpointConfigurationMessage: String?
     @Published private(set) var agentFileURL: URL?
     @Published private(set) var hasRequestedAuthorization: Bool
     @Published private(set) var backgroundDeliveryEnabled = false
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticChangesPending: Bool
     @Published private(set) var directSyncEnabled: Bool
+    @Published private(set) var shareFormat: ShareFormat
 
     let healthStore: HKHealthStore
     let supportedTypeCount = HealthDataCatalog.sampleTypes.count
@@ -41,6 +44,7 @@ final class HealthExportCoordinator: ObservableObject {
     private let lastFullSyncKey = "health-json.last-full-sync"
     private let automaticSyncKey = "health-json.automatic-sync-enabled"
     private let directSyncEnabledKey = "health-json.direct.enabled"
+    private let shareFormatKey = "health-json.share-format"
     private let automaticChangesPendingKey = "health-json.automatic-changes-pending"
     private let lastDirectSyncKey = "health-json.direct.last-delivery"
     private let minimumAutomaticInterval: TimeInterval = 5 * 60
@@ -56,8 +60,9 @@ final class HealthExportCoordinator: ObservableObject {
             ? true
             : UserDefaults.standard.bool(forKey: automaticSyncKey)
         directSyncEnabled = UserDefaults.standard.object(forKey: directSyncEnabledKey) == nil
-            ? true
+            ? false
             : UserDefaults.standard.bool(forKey: directSyncEnabledKey)
+        shareFormat = ShareFormat(rawValue: UserDefaults.standard.string(forKey: shareFormatKey) ?? "") ?? .json
         automaticChangesPending = UserDefaults.standard.bool(forKey: automaticChangesPendingKey)
         readableTypeIdentifiers = Set(UserDefaults.standard.stringArray(forKey: readableTypesKey) ?? [])
         lastSyncDate = UserDefaults.standard.object(forKey: lastSyncKey) as? Date
@@ -70,6 +75,7 @@ final class HealthExportCoordinator: ObservableObject {
             agentFileURL = exportLocation?.url
                 .deletingLastPathComponent()
                 .appendingPathComponent("Agent/health-context.json")
+            directSyncEndpoint = await directSync.configuredEndpoint()?.absoluteString
         }
     }
 
@@ -122,7 +128,7 @@ final class HealthExportCoordinator: ObservableObject {
 
     func requestAuthorization() async {
         guard HKHealthStore.isHealthDataAvailable() else {
-            phase = .failed("HealthKit is not available on this device.")
+            phase = .failed(L10n.text("coordinator.error.healthkit_unavailable"))
             return
         }
 
@@ -150,11 +156,12 @@ final class HealthExportCoordinator: ObservableObject {
         await runForegroundExport(fromBeginning: true)
     }
 
-    func syncChanges() async {
-        guard !foregroundExportRunning else { return }
+    @discardableResult
+    func syncChanges() async -> Bool {
+        guard !foregroundExportRunning else { return false }
         if !hasRequestedAuthorization {
             await requestAuthorization()
-            guard hasRequestedAuthorization else { return }
+            guard hasRequestedAuthorization else { return false }
         }
         if agentExportRunning {
             phase = .exporting(current: 1, total: 1, type: "ожидание текущей синхронизации")
@@ -164,6 +171,7 @@ final class HealthExportCoordinator: ObservableObject {
         if success {
             clearAutomaticChangesPending(ifGenerationIs: generation)
         }
+        return success
     }
 
     func setAutomaticSyncEnabled(_ enabled: Bool) async {
@@ -190,7 +198,7 @@ final class HealthExportCoordinator: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: directSyncEnabledKey)
         if enabled {
             directSyncConnectionState = .checking
-            directSyncMessage = "Проверка соединения…"
+            directSyncMessage = L10n.text("connection.status.checking")
             await retryPendingDirectUploads(force: true)
             if directSyncConnectionState == .idle {
                 await checkDirectSyncConnection()
@@ -201,10 +209,41 @@ final class HealthExportCoordinator: ObservableObject {
         }
     }
 
+    func setShareFormat(_ format: ShareFormat) {
+        shareFormat = format
+        UserDefaults.standard.set(format.rawValue, forKey: shareFormatKey)
+    }
+
+    func configureDirectSyncEndpoint(_ rawValue: String) async -> Bool {
+        do {
+            let endpoint = try HealthImportEndpoint.normalize(rawValue)
+            await directSync.configureEndpoint(endpoint)
+            directSyncEndpoint = endpoint.absoluteString
+            endpointConfigurationMessage = L10n.text("connection.endpoint.saved")
+            directSyncMessage = nil
+            directSyncConnectionState = .idle
+            if directSyncEnabled {
+                await checkDirectSyncConnection()
+            }
+            return true
+        } catch {
+            endpointConfigurationMessage = localizedEndpointError(error)
+            return false
+        }
+    }
+
+    func clearDirectSyncEndpoint() async {
+        await directSync.configureEndpoint(nil)
+        directSyncEndpoint = nil
+        endpointConfigurationMessage = L10n.text("connection.endpoint.cleared")
+        directSyncMessage = nil
+        directSyncConnectionState = .notConfigured
+    }
+
     func checkDirectSyncConnection() async {
         guard directSyncEnabled else { return }
         directSyncConnectionState = .checking
-        directSyncMessage = "Проверка соединения…"
+        directSyncMessage = L10n.text("connection.status.checking")
         applyDirectSyncReport(await directSync.checkConnection())
     }
 
@@ -225,17 +264,31 @@ final class HealthExportCoordinator: ObservableObject {
             updateAgentFileURL()
             phase = .idle
         } catch {
-            phase = .failed("Не удалось сохранить доступ к папке: \(error.localizedDescription)")
+            phase = .failed(L10n.format("coordinator.error.folder_access", error.localizedDescription))
         }
     }
 
     func prepareAgentFileForSharing() async -> URL? {
+        if !hasRequestedAuthorization {
+            await requestAuthorization()
+            guard hasRequestedAuthorization else { return nil }
+        }
+        if agentExportRunning {
+            phase = .exporting(current: 1, total: 1, type: L10n.text("coordinator.phase.waiting_for_sync"))
+        }
+        let generation = automaticChangeGeneration
+        guard await runAgentExport(isBackground: false) else { return nil }
+        clearAutomaticChangesPending(ifGenerationIs: generation)
         do {
-            return try await engine.makeAgentSnapshotShareCopy()
+            return try await engine.makeAgentSnapshotShareCopy(format: shareFormat)
         } catch {
-            phase = .failed("Не удалось подготовить единый файл: сначала обновите JSON.")
+            phase = .failed(L10n.text("coordinator.error.share_prepare"))
             return nil
         }
+    }
+
+    func loadAgentSnapshotForViewer() async throws -> HealthDataSnapshot {
+        try await engine.loadAgentSnapshot()
     }
 
     private func runForegroundExport(fromBeginning: Bool) async {
@@ -252,14 +305,6 @@ final class HealthExportCoordinator: ObservableObject {
                 let characteristicResult = try await engine.exportCharacteristics()
                 total = total + characteristicResult.0
                 exportLocation = characteristicResult.1
-            }
-
-            do {
-                let medicationResult = try await engine.exportMedications()
-                total = total + medicationResult.0
-                exportLocation = medicationResult.1
-            } catch {
-                total.typesFailed += 1
             }
 
             do {
@@ -358,7 +403,7 @@ final class HealthExportCoordinator: ObservableObject {
         defer { releaseAgentExportAccess() }
 
         if !isBackground {
-            phase = .exporting(current: 1, total: 1, type: "единый файл")
+            phase = .exporting(current: 1, total: 1, type: L10n.text("coordinator.phase.snapshot"))
         }
         do {
             let writesFullSnapshot = !isBackground || fullReconciliation
@@ -391,7 +436,7 @@ final class HealthExportCoordinator: ObservableObject {
             return true
         } catch {
             if !isBackground {
-                phase = .failed("Не удалось создать единый файл: \(error.localizedDescription)")
+                phase = .failed(L10n.format("coordinator.error.snapshot", error.localizedDescription))
             }
             print("HealthJSON agent snapshot failed: \(error)")
             return false
@@ -421,6 +466,21 @@ final class HealthExportCoordinator: ObservableObject {
         directSyncPendingCount = report.pendingCount
         directSyncMessage = report.message
         directSyncConnectionState = report.connectionState
+    }
+
+    private func localizedEndpointError(_ error: Error) -> String {
+        switch error as? HealthImportEndpointError {
+        case .empty:
+            return L10n.text("connection.endpoint.error.empty")
+        case .invalidURL:
+            return L10n.text("connection.endpoint.error.invalid")
+        case .requiresHTTPS:
+            return L10n.text("connection.endpoint.error.https")
+        case .requiresTailnetHost:
+            return L10n.text("connection.endpoint.error.tailnet")
+        case nil:
+            return L10n.text("connection.endpoint.error.invalid")
+        }
     }
 
     private func automaticRefreshDelay(now: Date = Date()) -> TimeInterval {
