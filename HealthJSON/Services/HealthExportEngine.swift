@@ -129,10 +129,10 @@ actor HealthExportEngine {
         return try await agentExporter.exportRecentUpdate()
     }
 
-    func makeAgentSnapshotShareCopy() async throws -> URL {
+    func makeAgentSnapshotShareCopy(format: ShareFormat) async throws -> URL {
         await acquireExclusiveAccess()
         defer { releaseExclusiveAccess() }
-        return try await cloudStore.makeAgentSnapshotShareCopy()
+        return try await cloudStore.makeAgentSnapshotShareCopy(format: format)
     }
 
     private func preferredUnits() async -> [HKQuantityType: HKUnit] {

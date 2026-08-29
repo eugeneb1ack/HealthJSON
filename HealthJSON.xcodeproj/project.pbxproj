@@ -22,11 +22,17 @@
 		10000000000000000000000D /* AgentHealthExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* AgentHealthExporter.swift */; };
 		10000000000000000000000E /* CategoryIntervalClipper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* CategoryIntervalClipper.swift */; };
 		10000000000000000000000F /* DirectHealthSyncClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* DirectHealthSyncClient.swift */; };
+		100000000000000000000010 /* HealthContextCSVEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* HealthContextCSVEncoder.swift */; };
+		100000000000000000000011 /* TailscaleSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* TailscaleSettingsView.swift */; };
+		100000000000000000000012 /* AppLocalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* AppLocalizer.swift */; };
+		100000000000000000000013 /* HealthImportEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* HealthImportEndpoint.swift */; };
 		A10000000000000000000001 /* AppIcon60x60@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppIcon60x60@2x.png */; };
 		A10000000000000000000002 /* AppIcon60x60@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AppIcon60x60@3x.png */; };
 		A10000000000000000000003 /* AppIcon76x76@1x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* AppIcon76x76@1x~ipad.png */; };
 		A10000000000000000000004 /* AppIcon76x76@2x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* AppIcon76x76@2x~ipad.png */; };
 		A10000000000000000000005 /* AppIcon83.5x83.5@2x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* AppIcon83.5x83.5@2x~ipad.png */; };
+		A10000000000000000000006 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = B200000000000000000000005 /* Localizable.strings */; };
+		A10000000000000000000007 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = B200000000000000000000006 /* InfoPlist.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +54,14 @@
 		20000000000000000000000F /* AgentHealthExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHealthExporter.swift; sourceTree = "<group>"; };
 		200000000000000000000010 /* CategoryIntervalClipper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryIntervalClipper.swift; sourceTree = "<group>"; };
 		200000000000000000000011 /* DirectHealthSyncClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectHealthSyncClient.swift; sourceTree = "<group>"; };
+		200000000000000000000012 /* HealthContextCSVEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthContextCSVEncoder.swift; sourceTree = "<group>"; };
+		200000000000000000000013 /* TailscaleSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleSettingsView.swift; sourceTree = "<group>"; };
+		200000000000000000000014 /* AppLocalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization/AppLocalizer.swift; sourceTree = "<group>"; };
+		200000000000000000000015 /* HealthImportEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthImportEndpoint.swift; sourceTree = "<group>"; };
+		B200000000000000000000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		B200000000000000000000002 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/Localizable.strings; sourceTree = "<group>"; };
+		B200000000000000000000003 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		B200000000000000000000004 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		A20000000000000000000001 /* AppIcon60x60@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icons/AppIcon60x60@2x.png"; sourceTree = "<group>"; };
 		A20000000000000000000002 /* AppIcon60x60@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icons/AppIcon60x60@3x.png"; sourceTree = "<group>"; };
 		A20000000000000000000003 /* AppIcon76x76@1x~ipad.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icons/AppIcon76x76@1x~ipad.png"; sourceTree = "<group>"; };
@@ -79,10 +93,13 @@
 			children = (
 				200000000000000000000001 /* HealthJSONApp.swift */,
 				200000000000000000000002 /* AppDelegate.swift */,
+				200000000000000000000014 /* AppLocalizer.swift */,
 				400000000000000000000002 /* Models */,
 				400000000000000000000003 /* Services */,
 				400000000000000000000004 /* UI */,
 				20000000000000000000000B /* Info.plist */,
+				B200000000000000000000006 /* InfoPlist.strings */,
+				B200000000000000000000005 /* Localizable.strings */,
 				20000000000000000000000C /* HealthJSON.entitlements */,
 				A20000000000000000000001 /* AppIcon60x60@2x.png */,
 				A20000000000000000000002 /* AppIcon60x60@3x.png */,
@@ -112,8 +129,10 @@
 				200000000000000000000009 /* HealthKitEncoder.swift */,
 				20000000000000000000000D /* ExportFolderAccess.swift */,
 				20000000000000000000000F /* AgentHealthExporter.swift */,
-				200000000000000000000010 /* CategoryIntervalClipper.swift */,
-				200000000000000000000011 /* DirectHealthSyncClient.swift */,
+					200000000000000000000010 /* CategoryIntervalClipper.swift */,
+					200000000000000000000011 /* DirectHealthSyncClient.swift */,
+					200000000000000000000012 /* HealthContextCSVEncoder.swift */,
+					200000000000000000000015 /* HealthImportEndpoint.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -121,8 +140,9 @@
 		400000000000000000000004 /* UI */ = {
 			isa = PBXGroup;
 			children = (
-				20000000000000000000000A /* ContentView.swift */,
-				20000000000000000000000E /* FolderPicker.swift */,
+					20000000000000000000000A /* ContentView.swift */,
+					20000000000000000000000E /* FolderPicker.swift */,
+					200000000000000000000013 /* TailscaleSettingsView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -136,6 +156,27 @@
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
+
+/* Begin PBXVariantGroup section */
+		B200000000000000000000005 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				B200000000000000000000001 /* en */,
+				B200000000000000000000002 /* ru */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		B200000000000000000000006 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				B200000000000000000000003 /* en */,
+				B200000000000000000000004 /* ru */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin PBXNativeTarget section */
 		500000000000000000000001 /* HealthJSON */ = {
@@ -175,6 +216,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				ru,
 				Base,
 			);
 			mainGroup = 400000000000000000000000;
@@ -198,6 +240,8 @@
 				A10000000000000000000003 /* AppIcon76x76@1x~ipad.png in Resources */,
 				A10000000000000000000004 /* AppIcon76x76@2x~ipad.png in Resources */,
 				A10000000000000000000005 /* AppIcon83.5x83.5@2x~ipad.png in Resources */,
+				A10000000000000000000006 /* Localizable.strings in Resources */,
+				A10000000000000000000007 /* InfoPlist.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -221,8 +265,12 @@
 				10000000000000000000000B /* ExportFolderAccess.swift in Sources */,
 				10000000000000000000000C /* FolderPicker.swift in Sources */,
 				10000000000000000000000D /* AgentHealthExporter.swift in Sources */,
-				10000000000000000000000E /* CategoryIntervalClipper.swift in Sources */,
-				10000000000000000000000F /* DirectHealthSyncClient.swift in Sources */,
+					10000000000000000000000E /* CategoryIntervalClipper.swift in Sources */,
+					10000000000000000000000F /* DirectHealthSyncClient.swift in Sources */,
+					100000000000000000000010 /* HealthContextCSVEncoder.swift in Sources */,
+				100000000000000000000011 /* TailscaleSettingsView.swift in Sources */,
+				100000000000000000000012 /* AppLocalizer.swift in Sources */,
+				100000000000000000000013 /* HealthImportEndpoint.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

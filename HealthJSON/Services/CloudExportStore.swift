@@ -97,6 +97,7 @@ final class CloudExportStore {
             withJSONObject: object,
             options: [.sortedKeys, .withoutEscapingSlashes]
         )
+        let csvData = try HealthContextCSVEncoder.data(from: object)
         let location = try await resolveLocation()
         let selectedFolder = folderAccess.resolve()
         let startedAccess = selectedFolder?.startAccessingSecurityScopedResource() ?? false
@@ -109,12 +110,16 @@ final class CloudExportStore {
             .appendingPathComponent("Agent", isDirectory: true)
         try fileManager.createDirectory(at: agentFolder, withIntermediateDirectories: true)
         let destination = agentFolder.appendingPathComponent("health-context.json")
+        let csvDestination = agentFolder.appendingPathComponent("health-context.csv")
         if !Self.hasHealthContent(object),
            let existingData = try? Data(contentsOf: destination),
            let existingObject = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
            Self.hasHealthContent(existingObject) {
             throw CloudExportStoreError.wouldReplacePopulatedSnapshotWithEmpty
         }
+        // Write CSV first so a failed CSV write leaves the JSON snapshot untouched.
+        // Each public file is atomically replaced; JSON remains the canonical sync contract.
+        try coordinatedWrite(csvData, to: csvDestination)
         try coordinatedWrite(data, to: destination)
         if let documents = try? fileManager.url(
             for: .documentDirectory,
@@ -152,7 +157,7 @@ final class CloudExportStore {
         return (location, destination, data)
     }
 
-    func makeAgentSnapshotShareCopy() async throws -> URL {
+    func makeAgentSnapshotShareCopy(format: ShareFormat) async throws -> URL {
         let location = try await resolveLocation()
         let selectedFolder = folderAccess.resolve()
         return try await Task.detached(priority: .userInitiated) { [fileManager] in
@@ -163,7 +168,7 @@ final class CloudExportStore {
 
             let source = location.url
                 .deletingLastPathComponent()
-                .appendingPathComponent("Agent/health-context.json")
+                .appendingPathComponent("Agent/\(format.fileName)")
             guard fileManager.fileExists(atPath: source.path) else {
                 throw CocoaError(.fileNoSuchFile)
             }
@@ -171,7 +176,7 @@ final class CloudExportStore {
             let shareFolder = fileManager.temporaryDirectory
                 .appendingPathComponent("HealthJSONShare", isDirectory: true)
             try fileManager.createDirectory(at: shareFolder, withIntermediateDirectories: true)
-            let destination = shareFolder.appendingPathComponent("health-context.json")
+            let destination = shareFolder.appendingPathComponent(format.fileName)
             try? fileManager.removeItem(at: destination)
             try fileManager.copyItem(at: source, to: destination)
             return destination

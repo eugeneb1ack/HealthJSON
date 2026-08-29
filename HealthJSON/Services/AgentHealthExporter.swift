@@ -7,6 +7,8 @@ actor AgentHealthExporter {
     private let calendar = Calendar.autoupdatingCurrent
     private let historyDays = 365
     private let recentUpdateDays = 3
+    private let maximumConcurrentHealthQueries = 8
+    private let healthQueryTimeout: TimeInterval = 30
 
     init(healthStore: HKHealthStore, cloudStore: CloudExportStore) {
         self.healthStore = healthStore
@@ -33,52 +35,21 @@ actor AgentHealthExporter {
         let start = calendar.date(byAdding: .day, value: startOffset, to: today) ?? today
         let units = try await healthStore.preferredUnits(for: Set(HealthDataCatalog.quantityTypes))
 
-        let metrics = try await withThrowingTaskGroup(of: (String, [String: Any]?).self) { group in
-            for type in HealthDataCatalog.quantityTypes {
-                guard let unit = units[type] else { continue }
-                group.addTask {
-                    let value = try await self.quantityMetric(type, unit: unit, start: start, end: end)
-                    return (await self.semanticKey(type.identifier), value)
-                }
-            }
-            var result: [String: Any] = [:]
-            for try await (key, value) in group {
-                if let value { result[key] = value }
-            }
-            return result
-        }
+        let metrics = await metricPayload(units: units, start: start, end: end)
         print("HealthJSON agent metrics ready: \(metrics.count)")
 
-        let categories = try await withThrowingTaskGroup(of: (String, [String: Any]?).self) { group in
-            for type in HealthDataCatalog.categoryTypes {
-                group.addTask {
-                    let samples = try await self.samples(of: type, start: start, end: end)
-                    let values = samples.compactMap { $0 as? HKCategorySample }
-                    return (
-                        await self.semanticKey(type.identifier),
-                        await self.categoryMetric(type, samples: values, start: start, end: end)
-                    )
-                }
-            }
-            var result: [String: Any] = [:]
-            for try await (key, value) in group {
-                if let value { result[key] = value }
-            }
-            return result
-        }
+        let categories = await categoryPayload(start: start, end: end)
         print("HealthJSON agent categories ready: \(categories.count)")
 
-        let sleepIntervals = try await sleepIntervalPayload(start: start, end: end)
+        let sleepIntervals = (try? await sleepIntervalPayload(start: start, end: end)) ?? []
         print("HealthJSON agent sleep intervals ready: \(sleepIntervals.count)")
 
-        let workouts = try await workoutPayload(start: start, end: end, units: units)
+        let workouts = (try? await workoutPayload(start: start, end: end, units: units)) ?? []
         print("HealthJSON agent workouts ready: \(workouts.count)")
-        let activity = try await activityPayload(start: start, end: generatedAt)
+        let activity = (try? await activityPayload(start: start, end: generatedAt)) ?? []
         print("HealthJSON agent activity ready: \(activity.count)")
-        let special = try await specialPayload(start: start, end: end)
+        let special = (try? await specialPayload(start: start, end: end)) ?? [:]
         print("HealthJSON agent special ready: \(special.count)")
-        let medications = (try? await medicationPayload()) ?? []
-        print("HealthJSON agent medications ready: \(medications.count)")
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "kind": isDelta ? "health-agent-delta" : "health-agent-context",
@@ -113,7 +84,6 @@ actor AgentHealthExporter {
             "categories": categories,
             "activityRings": activity,
             "workouts": workouts,
-            "medications": medications,
             "special": special,
             "sleepIntervals": sleepIntervals
         ]
@@ -128,14 +98,71 @@ actor AgentHealthExporter {
         print("HealthJSON agent export wrote \(fileURL.path)")
         return (
             ExportStatistics(
-                filesWritten: 1,
-                samplesAdded: metrics.count + categories.count + workouts.count + medications.count
+                filesWritten: isDelta ? 1 : 2,
+                samplesAdded: metrics.count + categories.count + workouts.count
                     + activity.count + sleepIntervals.count
             ),
             location,
             fileURL,
             data
         )
+    }
+
+    private func metricPayload(
+        units: [HKQuantityType: HKUnit],
+        start: Date,
+        end: Date
+    ) async -> [String: Any] {
+        let types = HealthDataCatalog.quantityTypes.compactMap { type -> (HKQuantityType, String, HKUnit)? in
+            guard let unit = units[type] else { return nil }
+            return (type, semanticKey(type.identifier), unit)
+        }
+        return await collectHealthQueries(types) { type, key, unit in
+            do {
+                return (key, try await self.quantityMetric(type, unit: unit, start: start, end: end))
+            } catch {
+                print("HealthJSON metric skipped \(type.identifier): \(error.localizedDescription)")
+                return (key, nil)
+            }
+        }
+    }
+
+    private func categoryPayload(start: Date, end: Date) async -> [String: Any] {
+        let types = HealthDataCatalog.categoryTypes.map { ($0, semanticKey($0.identifier)) }
+        return await collectHealthQueries(types) { type, key in
+            do {
+                let samples = try await self.samples(of: type, start: start, end: end)
+                let values = samples.compactMap { $0 as? HKCategorySample }
+                return (key, await self.categoryMetric(type, samples: values, start: start, end: end))
+            } catch {
+                print("HealthJSON category skipped \(type.identifier): \(error.localizedDescription)")
+                return (key, nil)
+            }
+        }
+    }
+
+    private func collectHealthQueries<Input>(
+        _ inputs: [Input],
+        operation: @escaping @Sendable (Input) async -> (String, [String: Any]?)
+    ) async -> [String: Any] {
+        guard !inputs.isEmpty else { return [:] }
+        return await withTaskGroup(of: (String, [String: Any]?).self) { group in
+            let initialCount = min(maximumConcurrentHealthQueries, inputs.count)
+            for input in inputs.prefix(initialCount) {
+                group.addTask { await operation(input) }
+            }
+
+            var nextIndex = initialCount
+            var result: [String: Any] = [:]
+            while let (key, value) = await group.next() {
+                if let value { result[key] = value }
+                guard nextIndex < inputs.count else { continue }
+                let input = inputs[nextIndex]
+                nextIndex += 1
+                group.addTask { await operation(input) }
+            }
+            return result
+        }
     }
 
     private func quantityMetric(
@@ -150,6 +177,7 @@ actor AgentHealthExporter {
             : [.discreteAverage, .discreteMin, .discreteMax, .mostRecent]
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
         let rows: [[Any]] = try await withCheckedThrowingContinuation { continuation in
+            let completion = HealthQueryCompletion(continuation: continuation)
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
@@ -159,11 +187,11 @@ actor AgentHealthExporter {
             )
             query.initialResultsHandler = { _, collection, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    completion.finish(.failure(error))
                     return
                 }
                 guard let collection else {
-                    continuation.resume(returning: [])
+                    completion.finish(.success([]))
                     return
                 }
                 var values: [[Any]] = []
@@ -187,7 +215,13 @@ actor AgentHealthExporter {
                         ])
                     }
                 }
-                continuation.resume(returning: values)
+                completion.finish(.success(values))
+            }
+            completion.scheduleTimeout(
+                after: healthQueryTimeout,
+                error: HealthQueryTimeout(typeIdentifier: type.identifier)
+            ) { [healthStore] in
+                healthStore.stop(query)
             }
             healthStore.execute(query)
         }
@@ -319,8 +353,6 @@ actor AgentHealthExporter {
             HKObjectType.electrocardiogramType(),
             HKObjectType.stateOfMindType(),
             HKObjectType.audiogramSampleType(),
-            HKObjectType.medicationDoseEventType(),
-            HKObjectType.visionPrescriptionType(),
             HKSeriesType.heartbeat(),
             HKSeriesType.workoutRoute()
         ] + assessmentTypes
@@ -376,41 +408,10 @@ actor AgentHealthExporter {
         return result
     }
 
-    private func medicationPayload() async throws -> [[String: Any]] {
-        let medications: [HKUserAnnotatedMedication] = try await withCheckedThrowingContinuation { continuation in
-            var values: [HKUserAnnotatedMedication] = []
-            var completed = false
-            let query = HKUserAnnotatedMedicationQuery(
-                predicate: nil,
-                limit: HKObjectQueryNoLimit
-            ) { _, medication, done, error in
-                guard !completed else { return }
-                if let error {
-                    completed = true
-                    continuation.resume(throwing: error)
-                } else if done {
-                    completed = true
-                    continuation.resume(returning: values)
-                } else if let medication {
-                    values.append(medication)
-                }
-            }
-            healthStore.execute(query)
-        }
-        return medications.map { medication in
-            [
-                "nickname": medication.nickname.map { $0 as Any } ?? NSNull(),
-                "isArchived": medication.isArchived,
-                "hasSchedule": medication.hasSchedule,
-                "displayText": medication.medication.displayText,
-                "generalForm": medication.medication.generalForm.rawValue
-            ]
-        }
-    }
-
     private func samples(of type: HKSampleType, start: Date, end: Date) async throws -> [HKSample] {
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
         return try await withCheckedThrowingContinuation { continuation in
+            let completion = HealthQueryCompletion(continuation: continuation)
             let query = HKSampleQuery(
                 sampleType: type,
                 predicate: predicate,
@@ -418,10 +419,16 @@ actor AgentHealthExporter {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
             ) { _, samples, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    completion.finish(.failure(error))
                 } else {
-                    continuation.resume(returning: samples ?? [])
+                    completion.finish(.success(samples ?? []))
                 }
+            }
+            completion.scheduleTimeout(
+                after: healthQueryTimeout,
+                error: HealthQueryTimeout(typeIdentifier: type.identifier)
+            ) { [healthStore] in
+                healthStore.stop(query)
             }
             healthStore.execute(query)
         }
@@ -519,4 +526,57 @@ actor AgentHealthExporter {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+}
+
+private struct HealthQueryTimeout: LocalizedError {
+    let typeIdentifier: String
+
+    var errorDescription: String? {
+        "HealthKit did not respond within the allowed time for \(typeIdentifier)."
+    }
+}
+
+private final class HealthQueryCompletion<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(continuation: CheckedContinuation<Value, Error>) {
+        self.continuation = continuation
+    }
+
+    @discardableResult
+    func finish(_ result: Result<Value, Error>) -> Bool {
+        lock.lock()
+        let continuation = continuation
+        self.continuation = nil
+        let timeoutTask = timeoutTask
+        self.timeoutTask = nil
+        lock.unlock()
+
+        guard let continuation else { return false }
+        timeoutTask?.cancel()
+        continuation.resume(with: result)
+        return true
+    }
+
+    func scheduleTimeout(after interval: TimeInterval, error: Error, onTimeout: @escaping @Sendable () -> Void) {
+        let task = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(interval))
+            } catch {
+                return
+            }
+            guard let self, self.finish(.failure(error)) else { return }
+            onTimeout()
+        }
+
+        lock.lock()
+        if continuation == nil {
+            task.cancel()
+        } else {
+            timeoutTask = task
+        }
+        lock.unlock()
+    }
 }
