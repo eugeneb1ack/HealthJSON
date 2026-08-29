@@ -33,8 +33,7 @@ final class CloudExportStore {
                     if startedAccess { selectedFolder.stopAccessingSecurityScopedResource() }
                 }
                 do {
-                    let url = selectedFolder
-                        .appendingPathComponent("Health JSON", isDirectory: true)
+                    let url = Self.exportRoot(for: selectedFolder)
                         .appendingPathComponent("Exports", isDirectory: true)
                     try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
                     return .selectedFolder(url)
@@ -181,6 +180,12 @@ final class CloudExportStore {
             try fileManager.copyItem(at: source, to: destination)
             return destination
         }.value
+    }
+
+    static func exportRoot(for selectedFolder: URL) -> URL {
+        selectedFolder.lastPathComponent.caseInsensitiveCompare("Health JSON") == .orderedSame
+            ? selectedFolder
+            : selectedFolder.appendingPathComponent("Health JSON", isDirectory: true)
     }
 
     private static func hasHealthContent(_ object: [String: Any]) -> Bool {
