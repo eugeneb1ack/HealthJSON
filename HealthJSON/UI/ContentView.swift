@@ -51,12 +51,16 @@ struct ContentView: View {
             Text(L10n.text("home.hero.title"))
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.9)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(L10n.text("home.hero.subtitle"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.9)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
@@ -378,7 +382,7 @@ struct ContentView: View {
 
     private var compactLastSyncText: String {
         guard let date = coordinator.lastSyncDate else { return L10n.text("home.last_sync.never_short") }
-        return L10n.dateTime(date)
+        return L10n.compactDateTime(date)
     }
 
     private var automaticSyncDescription: String {

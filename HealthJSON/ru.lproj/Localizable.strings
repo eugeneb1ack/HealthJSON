@@ -1,6 +1,6 @@
 "home.title" = "Здоровье";
 "home.hero.title" = "Приватный экспорт из Здоровья";
-"home.hero.subtitle" = "JSON, CSV, iCloud Drive и необязательный приватный API.";
+"home.hero.subtitle" = "JSON, CSV, iCloud Drive и приватный API по желанию.";
 "home.status.health_access" = "Доступ к Здоровью";
 "home.status.requested" = "Запрошен";
 "home.status.not_requested" = "Не запрошен";

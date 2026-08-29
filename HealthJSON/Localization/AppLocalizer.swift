@@ -24,4 +24,15 @@ enum L10n {
     static func time(_ date: Date) -> String {
         date.formatted(.dateTime.hour().minute().locale(.autoupdatingCurrent))
     }
+
+    static func compactDateTime(_ date: Date) -> String {
+        date.formatted(
+            .dateTime
+                .day()
+                .month(.abbreviated)
+                .hour()
+                .minute()
+                .locale(.autoupdatingCurrent)
+        )
+    }
 }
